@@ -1,0 +1,6 @@
+# Programming for Autonomous Drone
+
+# Caution!
+1. No direct modification/push to main brach.
+2. Exact and Detailed Commits.
+3. Local environment -> Pull Request to other branch -> Develop Branch -> Modification -> Main Branch(PR)
