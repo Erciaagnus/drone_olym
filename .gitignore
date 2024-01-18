@@ -1,0 +1,23 @@
+# Build
+build/**
+
+# Thirdparty
+thirdparty/install/**
+
+# VSCode
+.vscode/**
+.idea/**
+.cashe/**
+.history/**
+
+#windows
+.DS_Store
+
+#logs
+logs/**
+
+#catkin_tools
+.catkin_tools/**
+
+#devel
+devel/**
