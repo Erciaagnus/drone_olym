@@ -6,6 +6,6 @@
 
 	<!-- Our node to control the drone -->
 	<node pkg="xyz_controller_py" type="offb_node.py" name="offb_node_py" required="true" output="screen" />
-    <!-- <node pkg="xyz_controller_py" type="pesudo_sensor_node.py" name="pesudo_sensor_node_py" required="true" output="screen" />
-    <node pkg="xyz_controller_py" type="xyz_controller_node.py" name="xyz_controller_node_py" required="true" output="screen" /> -->
+    <node pkg="xyz_controller_py" type="pesudo_sensor_node.py" name="pesudo_sensor_node_py" required="true" output="screen" />
+    <node pkg="xyz_controller_py" type="xyz_controller_node.py" name="xyz_controller_node_py" required="true" output="screen" />
 </launch>

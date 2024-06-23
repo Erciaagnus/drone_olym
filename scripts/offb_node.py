@@ -6,8 +6,10 @@ from geometry_msgs.msg import PoseStamped
 from mavros_msgs.msg import State
 from mavros_msgs.srv import CommandBool, CommandBoolRequest, SetMode, SetModeRequest
 
+# 주요면수
 current_state = State()
 
+#함수정의
 def state_cb(msg):
     global current_state
     current_state = msg
@@ -16,18 +18,21 @@ def state_cb(msg):
 if __name__ == "__main__":
     rospy.init_node("offb_node_py")
 
+    # 서브스크라이버
     state_sub = rospy.Subscriber("mavros/state", State, callback = state_cb)
 
+    # 퍼블리셔
+    current_state_pub = rospy.Publisher("mavros/state", State, queue_size=10)
     local_pos_pub = rospy.Publisher("mavros/setpoint_position/local", PoseStamped, queue_size=10)
 
+    # 서비스
     rospy.wait_for_service("/mavros/cmd/arming")
     arming_client = rospy.ServiceProxy("mavros/cmd/arming", CommandBool)
 
     rospy.wait_for_service("/mavros/set_mode")
     set_mode_client = rospy.ServiceProxy("mavros/set_mode", SetMode)
 
-
-    # Setpoint publishing MUST be faster than 2Hz
+    # 타이밍 설정
     rate = rospy.Rate(20)
 
     # Wait for Flight Controller connection
@@ -35,6 +40,7 @@ if __name__ == "__main__":
         rate.sleep()
 
     pose = PoseStamped()
+    pose.header.stamp = rospy.Time.now()
 
     pose.pose.position.x = 0
     pose.pose.position.y = 0
@@ -60,6 +66,7 @@ if __name__ == "__main__":
         if(current_state.mode != "OFFBOARD" and (rospy.Time.now() - last_req) > rospy.Duration(5.0)):
             if(set_mode_client.call(offb_set_mode).mode_sent == True):
                 rospy.loginfo("OFFBOARD enabled")
+                current_state_pub.publish(current_state)
 
             last_req = rospy.Time.now()
         else:
@@ -72,3 +79,4 @@ if __name__ == "__main__":
         local_pos_pub.publish(pose)
 
         rate.sleep()
+# 여기에는 posision 받고 vel 을 마브로스 메시지로 출력하면 됨. 
