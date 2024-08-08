@@ -1,0 +1,28 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/henricus/drone_olym/devel/include/**",
+        "/opt/ros/noetic/include/**",
+        "/home/henricus/drone_olym/src/gym_setting/include/**",
+        "/home/henricus/drone_olym/src/mavros/libmavconn/include/**",
+        "/home/henricus/drone_olym/src/mavros/mavros/include/**",
+        "/home/henricus/drone_olym/src/mavros/mavros_msgs/include/**",
+        "/home/henricus/drone_olym/src/offboard_py/include/**",
+        "/home/henricus/drone_olym/src/opencv_example/include/**",
+        "/home/henricus/drone_olym/src/mavros/test_mavros/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}

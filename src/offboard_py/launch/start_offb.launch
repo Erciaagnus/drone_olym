@@ -5,5 +5,5 @@
     </include>
 
     <!-- Our node to control the drone -->
-    <node pkg="offboard_py" type="offboard.py" name="offb_node_py" required="true" output="screen" />
+    <node pkg="offboard_py" type="detect_ros.py" name="offb_node_py" required="true" output="screen" />
 </launch>

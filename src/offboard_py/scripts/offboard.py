@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+#
+# AUTHOR: JeongHeyok Lim
+# Maintainer: JeongHyeok Lim
+# E-mail: henricus0973@korea.ac.kr
+# Date: 2024-03-11
+# COPYRIGHT@2024 It is not permitted to use without AUTHOR's Permission
+#
 import rospy
 from geometry_msgs.msg import PoseStamped
 from mavros_msgs.msg import State
@@ -6,6 +13,7 @@ from mavros_msgs.srv import CommandBool, CommandBoolRequest, SetMode, SetModeReq
 from mavros_msgs.srv import CommandTOL, CommandTOLRequest
 import time
 
+# Define Callback Function
 def state_cb(msg):
     global current_state
     current_state = msg
@@ -24,7 +32,7 @@ if __name__ == "__main__":
     rate = rospy.Rate(20)  # Hz
     pose=PoseStamped()
     pose.header.stamp=rospy.Time.now()
-    
+
     for _ in range(100):
         local_pos_pub.publish(pose)
         rate.sleep()
