@@ -1,0 +1,8 @@
+prefix=/home/henricus/drone_olym/src/gym_setting/build/devel
+
+Name: gym_setting
+Description: Description of gym_setting
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 
