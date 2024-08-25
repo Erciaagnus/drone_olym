@@ -5,7 +5,7 @@ import os
 import sys
 import time
 import argparse
-
+import pickle
 current_file_path = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_file_path + os.path.sep + "gym")
 current_file_path = os.path.dirname(__file__)
@@ -36,6 +36,8 @@ from mavros_msgs.srv import ParamSet, ParamSetRequest, ParamSetResponse
 from mavros_msgs.msg import ParamValue
 from object import UAV, Target
 import threading
+import rospkg
+import os
 def wrap(theta):
     if theta > math.pi:
         theta -= 2*math.pi
@@ -59,9 +61,11 @@ class MUMT_v1(Env):
         self.imu_data = Imu()
         self.local_velocity = TwistStamped()
         self.global_velocity = TwistStamped()
-        self.dt = dt
+        self.dt = dt # 20Hz
         #self.gps_data = NavSatFix()
             # SUBSCRIBER
+        rospack = rospkg.RosPack()
+        self.package_path = rospack.get_path('simulation')
         self.state_sub = rospy.Subscriber(f"/uav0/mavros/state", State, self.state_cb, queue_size=10)
         self.attitude_sub = rospy.Subscriber(f"/uav0/mavros/setpoint_raw/attitude", AttitudeTarget, self.update_orientation, queue_size=10)
         self.pose_sub = rospy.Subscriber(f"/uav0/mavros/local_position/pose", PoseStamped, self.update_pose, queue_size=10)
@@ -171,6 +175,7 @@ class MUMT_v1(Env):
             uav.battery = random.randint(11000, 22000) if batteries is None else batteries[self.uavs.index(uav)]
         self.targets = []
         self.episode_number += 1
+        self.uav_trajectory_data =[[] for _ in range(self.m)]
 
         for uav in self.uavs:
             while uav.local_position_boolean is None:
@@ -194,6 +199,7 @@ class MUMT_v1(Env):
         for uav_idx, uav in enumerate(self.uavs):
             uav_x, uav_y, uav_theta = uav.state
             uav_battery_level = uav.battery
+            self.uav_trajectory_data[uav_idx].append((uav_x, uav_y, uav_battery_level, uav_theta))
 
         # TARGET
         if target_pose is None:
@@ -287,39 +293,83 @@ class MUMT_v1(Env):
     #TODO(5) : STEP FUNCTION [GYM ENVRIONMENT]
 #######################################################################################
     def step(self, action):
-        terminal = False
-        truncated = False
-        action - np.squeeze(action)
-        reward = 0
-        if action.ndim == 0:
-            action = np.expand_dims(action, axis = 0)
-        for uav_idx, uav_action in enumerate(action):
-            self.control_uav(uav_idx, uav_action)
-            print("GO TO NEXT STEP")
-            rospy.sleep(0.1)
-        #TODO(6) : 목표 대상 감시 여부(진행) 확인.
-        surveillance_matrix = np.zeros((self.m, self.n)) # mxn Correspondence
-        for uav_idx in range(self.m):
+        try:
+            terminal = False
+            truncated = False
+            action = np.squeeze(action)
+            reward = 0
+            if action.ndim == 0:
+                action = np.expand_dims(action, axis = 0)
+            threads = []
+            for uav_idx, uav_action in enumerate(action):
+                thread = threading.Thread(target=self.control_uav_thread, args=(uav_idx, uav_action))
+                threads.append(thread)
+                thread.start()
+            for thread in threads:
+                thread.join()
+            #TODO(6) : 목표 대상 감시 여부(진행) 확인.
+            surveillance_matrix = np.zeros((self.m, self.n)) # mxn Correspondence
+            for uav_idx in range(self.m):
+                for target_idx in range(self.n):
+                    surveillance_matrix[uav_idx, target_idx] = self.cal_surveillance(uav_idx, target_idx)
+            surveillance = np.any(surveillance_matrix, axis=0).astype(int)
+            #print("Surveillnace matrix ::: ", surveillance)
+
+            for uav_idx, uav in enumerate(self.uavs):
+                uav_x, uav_y, uav_theta = uav.state
+                uav_battery_level = uav.battery
+                self.uav_trajectory_data[uav_idx].append((uav_x, uav_y, uav_battery_level, uav_theta))
             for target_idx in range(self.n):
-                surveillance_matrix[uav_idx, target_idx] = self.cal_surveillance(uav_idx, target_idx)
-        surveillance = np.any(surveillance_matrix, axis=0).astype(int)
-        print("Surveillnace matrix ::: ", surveillance)
 
-        for target_idx in range(self.n):
+                self.targets[target_idx].surveillance = surveillance[target_idx]
+                self.targets[target_idx].cal_age()
+                reward += -self.targets[target_idx].age
+            reward = reward / self.n # Average Reward of All targets
 
-            self.targets[target_idx].surveillance = surveillance[target_idx]
-            self.targets[target_idx].cal_age()
-            reward += -self.targets[target_idx].age
-        reward = reward / self.n # Average Reward of All targets
+            self.step_count += 1
+            if self.step_count >= self.max_step:
+                truncated = True
+            return self.dict_observation, reward, terminal, truncated, {}
+        except KeyboardInterrupt:
+            self.save_trajectories()
+        finally:
+            self.save_trajectories()
+            #sys.stdout.flush()
+            #print("Traectories are saved successfully")
+    # def step(self, action):
+        # terminal = False
+        # truncated = False
+        # action = np.squeeze(action)
+        # reward = 0
+        # if action.ndim == 0:
+        #     action = np.expand_dims(action, axis = 0)
+        # for uav_idx, uav_action in enumerate(action):
+        #     self.control_uav(uav_idx, uav_action)
+        #     print("GO TO NEXT STEP")
+        #     rospy.sleep(0.1)
+        # #TODO(6) : 목표 대상 감시 여부(진행) 확인.
+        # surveillance_matrix = np.zeros((self.m, self.n)) # mxn Correspondence
+        # for uav_idx in range(self.m):
+        #     for target_idx in range(self.n):
+        #         surveillance_matrix[uav_idx, target_idx] = self.cal_surveillance(uav_idx, target_idx)
+        # surveillance = np.any(surveillance_matrix, axis=0).astype(int)
+        # print("Surveillnace matrix ::: ", surveillance)
 
-        self.step_count += 1
-        if self.step_count >= self.max_step:
-            truncated = True
-        return self.dict_observation, reward, terminal, truncated, {}
+        # for target_idx in range(self.n):
+
+        #     self.targets[target_idx].surveillance = surveillance[target_idx]
+        #     self.targets[target_idx].cal_age()
+        #     reward += -self.targets[target_idx].age
+        # reward = reward / self.n # Average Reward of All targets
+
+        # self.step_count += 1
+        # if self.step_count >= self.max_step:
+        #     truncated = True
+        # return self.dict_observation, reward, terminal, truncated, {}
 
 ####################################################################################
     #TODO(7) : Control UAV Function (Orientation)
-    def control_uav(self, uav_idx, action):
+    def control_uav_thread(self, uav_idx, action):
         #action is 0 or 1
         self.uavs[uav_idx].charging = 0
         uav = self.uavs[uav_idx]
@@ -348,14 +398,15 @@ class MUMT_v1(Env):
                 else: # action = 1 모든 uav가 1 그러면 감시 상태
                     self.uavs[uav_idx].battery -= 2.503
                     w1_action = self.toc_get_action(self.uavs[uav_idx].obs[:2])
-                    print("TOC GET ATTITUDE", w1_action)
+                    print(f"TOC GET ATTITUDE at UAV{uav_idx}", w1_action)
+                    self.uavs[uav_idx].move(w1_action)
                     self.new_uav_state = self.uavs[uav_idx].move(w1_action)
                     self.publish_attitude(self.uavs[uav_idx], w1_action)
             else:
                 self.uavs[uav_idx].battery -= 2.503
                 print("TEST####",self.rel_observation(uav_idx, action-1)[:2]) #TEST#### [36.05551     0.98279375]
                 w1_action = self.dkc_get_action(self.rel_observation(uav_idx, action-1)[:2]) # 거리 & 알파값을 반환할 것
-                print("w1_action_uav_idx", uav_idx, "w1_action", w1_action)
+                print("DKC Action of UAV ::", uav_idx, ", w1_action ::", w1_action)
                 # uav 상태 업데이트. 여기서 uav.state값이 바뀌게 됨. 즉 move function에서 무언갈 바꿔야 함... 받아서 새로운 값을 받도록 해야 함.
                 self.uavs[uav_idx].move(w1_action)
                 self.new_uav_state = self.uavs[uav_idx].move(w1_action) # yaw rate에 따라 위치 UAV 업데이트...
@@ -363,8 +414,17 @@ class MUMT_v1(Env):
                 self.publish_attitude(self.uavs[uav_idx], w1_action)
 
     #TODO(8) : UTILS Function
+    def save_trajectories(self):
+        directory = os.path.join(self.package_path, 'traj')
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+        filename = f'{directory}/uav_trajectory_m_{self.m}_seed_{self.seed}.pkl'
+
+        with open(filename, 'wb') as file:
+            pickle.dump(self.uav_trajectory_data, file)
+        print(f"Trajecotry saved in {filename}")
     def publish_attitude(self, uav, yaw_rate):
-        yaw = uav.state[2] + yaw_rate*self.dt
+        yaw = uav.state[2] + yaw_rate*self.dt # 현재 스테이트에다가 yaw_rate * self.dt # 단위시간? 현재 Hz=20 따라서. dt = 0.05
         quaternion = quaternion_from_euler(0, 0, yaw)
         print(f'quaternion[0] = {quaternion[0]}, orientation_y = {quaternion[1]}, orientation_z = {quaternion[2]}, orientation_w = {quaternion[3]}')
 
