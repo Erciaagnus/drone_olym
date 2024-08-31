@@ -156,13 +156,7 @@ class UAV:
         self.state[0] = self.local_position.pose.position.x
         self.state[1] = self.local_position.pose.position.y
         yaw = self.heading_data.data * pi / 180 # Degree to Radian
-        #orientation = self.attitude_target.orientation
-        #roll, pitch, yaw = euler_from_quaternion([orientation.x, orientation.y, orientation.z, orientation.w])
         self.state[2] = yaw
-        # self.roll = roll
-        # self.pitch = pitch
-        #print("Update the UAV STATE INFO ::: ", self.state)
-        #rospy.loginfo(f"UAV {self.uav_id} updated state: {self.state}")
     def convert_angle_from_euler(self, theta):
         euler = pi/2 - theta
         if euler > pi:
@@ -172,9 +166,11 @@ class UAV:
         return euler
 class Target:
         _id_counter = 0
-        def __init__(self, state, age=0, initial_beta = 0, initial_r = 30, target_type = 'static', sigma_rayleigh = 0.5, m=None, seed = None ):
+        max_age = 72*3600
+        def __init__(self, state, age=0, initial_beta = 0, initial_r = 1000, target_type = 'static', sigma_rayleigh = 0.5, m=None, seed = None ):
             self.dt = 0.05
             self.state = state
+            # self.max_age = 72*3600
             self.surveillance = None
             self.age = age
             self.initial_beta = initial_beta
@@ -198,7 +194,7 @@ class Target:
             return Target(state = self.state.copy(), age=self.age, initial_beta = self.initial_beta, target_type = self.target_type, sigma_rayleigh = self.sigma_rayleigh)
         def cal_age(self):
             if self.surveillance == 0:
-                self.age = min(1000, self.age + 1)
+                self.age = min(self.max_age, self.age + 0.05) # 0.05 is Highr level control frequency
             else:
                 self.age = 0
         def update_position(self):
