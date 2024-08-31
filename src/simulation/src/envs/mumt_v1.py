@@ -45,64 +45,82 @@ def wrap(theta):
         theta += 2*math.pi
     return theta
 class MUMT_v1(Env):
-    def __init__(self, r_max=1000, r_min=0, dt=0.05, d=10.0, l=3, m=3, n=5, r_c=10, max_step=6000, seed=None):
+    def __init__(self, r_max=5000, r_min=10, dt=0.05, d=40.0, l=3, m=3, n=5, r_c=10, max_step=180_000, seed=None):
+        #TODO(1): Parameters
+        self.Q = 22_000 #[mAh] battery capacity
+        self.C_rate = 2
+        self.D_rate = 0.41 # 1/2.442 (battery runtime)
+        self.v = 17 #17
+        self.d = d #keeping distance [ m ] = 40 m
+        self.d_min = 30
+        self.omega_max = self.v / self.d_min
+        self.r_max = r_max
+
         #TODO(2): Check the MAVROS PX4 Communication
         self.init_env()
         self.uavs = [UAV(ns=f"/uav{i}", state=np.zeros(3), battery=22000) for i in range(m)]
         self.dt = dt # 20Hz
+
         # SUBSCRIBER
         rospack = rospkg.RosPack()
         self.package_path = rospack.get_path('simulation')
         self.attitude_target = AttitudeTarget()
         #TODO(3) GYM SPACE and Parameter
-        self.m = m
-        self.n = n
-        self.r_c = r_c
+        self.m = m # UAV
+        self.n = n # Target
+        self.r_c = r_c # Charging Radius
         self.step_count = None
         self.episode_number = 0
-        self.max_step = max_step
+        self.max_step = max_step # Max Step
         self.seed = seed
+
+        # Initialization for Dynamic Programming
+        self.n_r = round(self.r_max/self.v*10) # 원래는 800이었음.
         self.n_alpha = 360
-        self.n_r = 800
         self.seed = seed
         self.n_u = 2 # 액션 스페이스 개수
-        self.d = d
         self.l = l
-        self.v = 17
         self.lock = threading.Lock()
         self.w1_action = [None]*self.m
+
+        #TODO(4) Define Observation and Action Space
         obs_space = {}
         for uav_id in range(1, m+1):
             for target_id in range(1, n+1):
                 key = f"uav_id{uav_id}_target{target_id}"
-                obs_space[key] = Box(low=np.float32([r_min, -np.pi]),
+                obs_space[key] = Box(low=np.float32([0, -np.pi]),
                                      high= np.float32([r_max, np.pi]),
                                      dtype = np.float32)
         for uav_id in range(1, m+1):
             key = f"uav{uav_id}_charge_station"
-            obs_space[key] = Box(low=np.float32([r_min, -np.pi]),
+            obs_space[key] = Box(low=np.float32([0, -np.pi]),
                                  high = np.float32([r_max, np.pi]),
                                  dtype=np.float32)
         obs_space["battery"] = Box(low=np.float32([0]*m),
-                                   high = np.float32([22000]*m),
+                                   high = np.float32([self.Q]*m),
                                    dtype=np.float32)
         obs_space["age"] = Box(low=np.float32([0]*n),
-                               high=np.float32([1000]*n),
+                               high=np.float32([Target.max_age]*n),
                                dtype=np.float32)
         self.observation_space = Dict(obs_space)
         self.action_space = MultiDiscrete([n+1]*m, seed=self.seed)
         #self.uavs=[] 위에서 uavs_namespace로 이미 정함. 위에서 state=뭐시기라 정한 것 좀 고쳐야 할 듯.
         self.targets = []
         current_file_path = os.path.dirname(os.path.abspath(__file__))
+        #self.distance_keeping_result00 = np.load(current_file_path+ os.path.sep + "dkc_real_dt_0.05_2a_sig0_val_iter.npz")
+
         self.distance_keeping_results = np.load(os.path.join(current_file_path, "dkc_r5.0_rt0.04_2a_sig0_val_iter.npz"))
         self.distance_keeping_straightened_policy00 = self.distance_keeping_results["policy"]
+
+        #self.time_optimal_straightened_policy00 = np.load(current_file_path+ os.path.sep + "lengthened_toc_real_dt_0.05_2a_sig0_val_iter.npy")
         self.time_optimal_straightened_policy00 = np.load(os.path.join(current_file_path, "lengthened_toc_r5.0_2a_sig0_val_iter.npy"))
 
         '''
         States Form
         '''
+        # 0.0 ~ self.dkc_env.r_max, self.n_r
         self.states = States(
-            np.linspace(0.0, 80.0, self.n_r, dtype=np.float32), # 0~80까지 2개 생성
+            np.linspace(0.0, self.r_max, self.n_r, dtype=np.float32), # 0~80까지 2개 생성
             np.linspace(
                 -np.pi,
                 np.pi - np.pi /self.n_alpha,
@@ -117,7 +135,7 @@ class MUMT_v1(Env):
         '''
         # Define Action Spaces (Range, Here we set 2 actions)
         self.actions = Actions(
-            np.linspace(-1.0 / 4.5, 1.0 / 4.5, self.n_u, dtype=np.float32).reshape(
+            np.linspace(-self.omega_max, self.omega_max, self.n_u, dtype=np.float32).reshape(
                 (-1, 1)
             ) # Tangentional / max_steering angle (4.5) # Yaw니까
         ) # Shape = (2, 1)
@@ -148,9 +166,9 @@ class MUMT_v1(Env):
             print(f"{uav.ns} current position updated successfully")
         if uav_pose is None:
             for uav in self.uavs:
-                uav_x = uav.pose.pose.position.x
-                uav_y = uav.pose.pose.position.y
-                yaw = uav.heading_data.data * pi / 180
+                uav_x = uav.pose.pose.position.x # Current Position x
+                uav_y = uav.pose.pose.position.y # Current Position y
+                yaw = uav.heading_data.data * pi / 180 # Degree to Radian
                 #orientation = uav.attitude_target.orientation
                 #_, _, yaw = euler_from_quaternion([orientation.x, orientation.y, orientation.z, orientation.w])
                 uav_theta = yaw
@@ -181,17 +199,13 @@ class MUMT_v1(Env):
             target1_r = np.sqrt(np.array([target[0]**2 + target[1]**2 for target in target_states]))
             target1_beta = np.arctan2(np.array([target[1] for target in target_states]), np.array([target[0] for target in target_states]))
         # 위에서 구한, target_states, ages
-        for i in range(self.n): # Target 개수 만큼 self.target에서 에이전트 관리
+        for i in range(self.n): # Target 개수 만큼 self.target에서 에이전트 관
             # 이 데이터는 결국 n개의 행을 가진 targets agent 행렬임
             self.targets.append(Target(state=target_states[i], age=ages[i],
                                             initial_beta=target1_beta[i], initial_r=target1_r[i],
                                             target_type=target_type, sigma_rayleigh=sigma_rayleigh,
                                             m=self.m, seed=self.seed,))
-        # self.initial_altitude = 10
-        # for uav in self.uavs:
-        #     print(f"UAV ID: {uav.uav_id}, Namespace: {uav.ns}, Armed: {uav.current_state.armed}, Mode: {uav.current_state.mode}")
-        # # Arm all UAVs first
-        # Then takeoff all UAVs
+
         self.initial_altitude = 10
         rate = rospy.Rate(20)
         threads = []
@@ -202,7 +216,7 @@ class MUMT_v1(Env):
         for t in threads:
             t.join()
         return self.dict_observation, {}
-    #TODO(5) : STEP FUNCTION [GYM ENVRIONMENT]
+    #TODO(6) : STEP FUNCTION [GYM ENVRIONMENT]
 #######################################################################################
     def step(self, action):
         try:
@@ -213,7 +227,7 @@ class MUMT_v1(Env):
             if action.ndim == 0:
                 action = np.expand_dims(action, axis = 0)
             threads = []
-            print("####################################33", action)
+            print("####################################", action)
             for uav_idx, uav_action in enumerate(action): #i번째 UAV, j번쨰 Target
                 thread = threading.Thread(target=self.control_uav_thread, args=(uav_idx, uav_action))
                 thread.start()
@@ -221,10 +235,7 @@ class MUMT_v1(Env):
             for thread in threads:
                 thread.join()
 
-
-
-
-            #TODO(6) : 목표 대상 감시 여부(진행) 확인.
+            #TODO(7) : 목표 대상 감시 여부(진행) 확인.
             surveillance_matrix = np.zeros((self.m, self.n)) # mxn Correspondence
             for uav_idx in range(self.m):
                 for target_idx in range(self.n):
@@ -264,12 +275,22 @@ class MUMT_v1(Env):
         else:
             if action == 0:
                 print("Go to the Charging Station")
+                self.action_is_charge(uav_idx)
             else:
-                self.uavs[uav_idx].battery -= 0.0417
+                self.uavs[uav_idx].battery = max(0, self.uavs[uav_idx].battery - self.D_rate*self.Q/3600/20)
                 self.w1_action[uav_idx] = self.dkc_get_action(self.rel_observation(uav_idx, action-1)[:2]) # 거리 & 알파값을 반환할 것
                 print(f"uav_{uav_idx+1} Relative Value to Target is :::{self.rel_observation(uav_idx, action-1)[:2]}, Action is {self.w1_action[uav_idx]}")
                 self.publish_attitude(self.uavs[uav_idx], self.w1_action[uav_idx])
                 self.uavs[uav_idx].move() #그런데 w1_action은 x축 방향 각도
+
+    def action_is_charge(self, uav_idx):
+        if (self.uavs[uav_idx].obs[0]<self.r_c):
+            self.uavs[uav_idx].charging = 1
+            self.uavs[uav_idx].battery = min(self.Q, self.uavs[uav_idx].battery + self.C_rate*self.Q/3600/20) # 20 Hz
+        else:
+            self.uavs[uav_idx].battery = max(0, self.uavs[uav_idx].battery - self.D_rate*self.Q/3600/20)
+            self.w1_action[uav_idx]=self.toc_get_action(self.uavs[uav_idx].obs[:2])
+            self.uavs[uav_idx].move()
 
     #TODO(8) : UTILS Function
     def save_trajectories(self):
@@ -277,43 +298,18 @@ class MUMT_v1(Env):
         if not os.path.exists(directory):
             os.makedirs(directory)
         filename = f'{directory}/uav_trajectory_m_{self.m}_seed_{self.seed}.pkl'
-
         with open(filename, 'wb') as file:
             pickle.dump(self.uav_trajectory_data, file)
         #print(f"Trajecotry saved in {filename}")
     def publish_attitude(self, uav, yaw_rate):
+        print(f"X_veloctiy :: {self.v*sin(uav.state[2])}, Y_velocity :: {self.v*cos(uav.state[2])}")
         uav.vel_target.twist.linear.x = self.v*sin(uav.state[2])
         uav.vel_target.twist.linear.y = self.v*cos(uav.state[2])
         uav.vel_target.twist.linear.z = 0
         uav.vel_target.twist.angular.z = yaw_rate
         uav.local_vel_pub.publish(uav.vel_target)
         rospy.sleep(0.1)
-        # 목표치 도달할 때까지 충분히 반복해서 메세지를 보낼 수 있도록 한다.
-        # yaw_rate와 w1_action의 방향 각도가 반대라서 yaw_rate에다가 - 붙여서.. (w1_action을 인자로 받는지라.)
-        #with self.lock:
-            # yaw = wrap(uav.state[2] - yaw_rate*self.dt) # 현재 스테이트에다가 yaw_rate * self.dt # 단위시간? 현재 Hz=20 따라서. dt = 0.05
-            # print("######################", uav.uav_id, "##############", yaw)
-            # quaternion = quaternion_from_euler(0, 0, yaw)
-            # for _ in range(20):
-            #     #uav.currnet_speed_x
-            #     uav.attitude_target.orientation.x = quaternion[0]
-            #     uav.attitude_target.orientation.y = quaternion[1]
-            #     uav.attitude_target.orientation.z = quaternion[2]
-            #     uav.attitude_target.orientation.w = quaternion[3]
-            #     uav.attitude_target.thrust = 0.8 # 1m/s
-            #     uav.attitude_pub.publish(uav.attitude_target)
-            #     uav.move()
-            # rospy.sleep(0.1)
 
-            # # Velocity control
-            # vel_msg = TwistStamped()
-            # vel_msg.header.stamp= rospy.Time.now()
-            # vel_msg.twist.linear.x = self.v * sin(uav.state[2])
-            # vel_msg.twist.linear.y = self.v * cos(uav.state[2])
-            # vel_msg.twist.linear.z = 0
-            # uav.local_vel_pub.publish(vel_msg)
-            # uav.move()
-            # rospy.sleep(0.1)
 
     def takeoff_uav(self, uav):
         uav.pose.pose.position.x = uav.local_position.pose.position.x
