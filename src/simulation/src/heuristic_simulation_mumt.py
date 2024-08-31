@@ -47,9 +47,13 @@ import csv
 class Heuristic():
     def __init__(self):
         #env=gym.make('SUST_v3-v0')
-        self.d_min = 4.5 # minimum turning radius
-        self.d = 10
-        self.r_cs = 3
+        self.d_min = 30 # minimum turning radius
+        self.d = 40
+        self.r_cs = 10
+        self.C_rate = 2
+        self.D_rate = 0.41
+        self.Q = 22_000
+        self.v = 17
     def make_cost_matrix(self, obs, m , n):
             keys = [f"uav{uav_id+1}_target{target_id+1}" for uav_id in range(m) for target_id in range(n)]
             observations = np.array([obs[key][0] for key in keys]) # obs[0] distance
@@ -69,22 +73,26 @@ class Heuristic():
             else:
                 action = 0
             return action
-    def uav1_target1_heuristic2(self, battery, age, r_c, r_t, eps):
+    def uav1_target1_heuristic2(self, battery, r_c, r_t, eps1, eps2):
+        '''
+                calculate the battery needed to return/surveil.
+                 d_min : minimum turning rate
+                d : minimum keeping distance radius
+        '''
         beta = np.arctan((r_t-self.d)/(self.d_min))
-        r_charge = self.d_min*2*(np.pi - beta) + r_t - self.d + eps
-        r_target = r_t + np.pi*self.d_min + eps*2
-        if battery < r_charge:
+        r_charge = self.d_min*2*(np.pi - beta) + r_c + eps1
+        r_target = 2*np.pi(self.d_min+self.d) + 2*(r_t) + eps2
+        battery_to_charge = r_charge /self.v*(self.D_rate*self.Q/3600)
+        battery_to_target = r_target / self.v*(self.D_rate*self.Q/3600)
+        if battery < battery_to_charge:
             action = 0
-                # charging   20: 30(closest r_t) - d(10)
-        elif (r_c < self.r_cs and 20 < age) and battery < r_target:
-            action = 0
-        else:
+        elif battery> battery_to_target:
             action = 1
-        # print(action, end='')
-        # print(f'b: {battery}, a: {action}')
+        # else:
+        #     action = -1 ???
         return action
     # 3번 사용
-    def get_action_from_pairs(self, UAV_idx, Target_idx, m, n, b1, b2, a1, obs, eps):
+    def get_action_from_pairs(self, UAV_idx, Target_idx, m, n, obs, eps):
         battery = obs["battery"]
         age = obs["age"]
 
@@ -109,12 +117,11 @@ class Heuristic():
     #             action[unselected_uav_idx] = 0
     #         return action
     # Get action 1번
-    def r_t_hungarian(self, obs, m, n, b1=2000, b2=1000, a1=1200):
-            bat = obs['battery']
-            age = obs['age']
-            uav_idx, target_idx = self.hungarian_assignment(self.make_cost_matrix(obs, m, n)) # COST MATRIX 사용 1번, 2번 사용
-            action = self.get_action_from_pairs(uav_idx, target_idx, bat, age, m, n, b1, b2, a1)
-            return action
+    def r_t_hungarian(self, obs, m, n, eps1=0, eps2=0):
+        uav_idx, target_idx = self.hungarian_assignment(self.make_cost_matrix(obs, m, n))
+        action = self.get_action_from_pairs(uav_idx, target_idx, m, n, obs, eps1, eps2)
+        return action
+
         #TODO(6) Criteria for Age
 
     # Get action 2번
@@ -161,24 +168,27 @@ class Simulation():
             writer.writerows(self.target_positions)
 
     def run(self):
-        self.target_pose = ([[100, 150], [-200, 300], [700, 800], [-300, -800], [300, -920]], [0]*self.n)
+        self.target_pose = ([[800, 1430], [-1180, 700], [1200, 1300], [-1100, -1200], [800, -1120]], [0]*self.n)
         env = MUMT_v1(m=self.m, n=self.n)
-        obs, _ = env.reset(uav_pose = [[10, 0, 0], [0, 10, 0], [-10, 0, 0]], target_pose = self.target_pose, batteries=[22000, 22000, 22000])
-        total_reward = 0
+        start_time = time.time()
+        obs, _ = env.reset(uav_pose = None, target_pose = self.target_pose, batteries=[22000, 22000, 22000])
         heuristic = Heuristic()
         truncated =False
+        total_time_step = 0
         step = 0
+        episode_reward = 0
         self.target_positions = self.target_pose[0]
         while truncated == False:
             step += 1
-            action = heuristic.high_age_first(obs, self.m)
+            #action = heuristic.high_age_first(obs, self.m)
+            action = heuristic.r_t_hungarian(obs, self.m, self.n, eps1 = 0, eps2 = 0)
             obs, reward, _, truncated, _ = env.step(action)
-            total_reward += reward
+            episode_reward += reward
             bat = obs['battery']
             age = obs['age']
-            print(f"step: {step} | battery: {bat} | reward: {total_reward}")
+            print(f"step: {step} | battery: {bat} | reward: {episode_reward}")
             print("##### ITRERATION IS FINISHED #####")
-            print(f'###################### action is {action}')
+            #print(f'###################### action is {action}')
             uav_positions = env.uavs[0].state[:2]
             self.uav_positions.append(uav_positions)
             for i in range(self.m):
@@ -188,11 +198,16 @@ class Simulation():
                         get_observation = obs[f'uav{i+1}_charge_station']
                         print(f"Observation from {i+1} is {get_observation}")
                     if action[i] == j:
-                        print(f"UAV{i+1} GO TO TARGET {j}")
+                        print(f"UAV{i+1} GO TO TARGET {j}:: {self.target_positions[j-1]}")
                         get_observation = obs[f'uav{i+1}_target{j}']
                         print(f"Observation from {i+1} is {get_observation}")
             #env.publish_rviz_poses()
             rospy.sleep(0.1)
+        total_time_step += step
+        reward_per_step = episode_reward / total_time_step
+        end_time = time.time()
+        excution_time = end_time - start_time
+        print(f"Reward per step :: {reward_per_step}, Excution Time :: {excution_time}")
 if __name__ == '__main__':
     simul = Simulation()
     simul.run()
