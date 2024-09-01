@@ -65,6 +65,7 @@ class UAV:
             self.local_position = PoseStamped()
             self.current_state = State()
             self.offb_set_mode = SetModeRequest()
+            self.landing_mode_request = SetModeRequest()
             self.arm_cmd = CommandBoolRequest()
             self.arm_cmd.value = True
             self.imu_data = Imu()
@@ -76,6 +77,8 @@ class UAV:
             self.heading_data = Float64()
             rate= rospy.Rate(20)
             self.vel_target = TwistStamped()
+            self.landing_request = CommandTOL()
+            self.previous_action = 0 # Previous Action if action==-1
             # SUBSCRIBER
             self.velocity_sub = rospy.Subscriber(f'{self.ns}/mavros/local_position/velocity', TwistStamped, self.velocity_cb)
             self.state_sub = rospy.Subscriber(f"{self.ns}/mavros/state", State, self.state_cb, queue_size=10)
@@ -90,6 +93,7 @@ class UAV:
             # Service proxies # UAV
             self.arming_client = rospy.ServiceProxy(f'{self.ns}/mavros/cmd/arming', CommandBool)
             self.set_mode_client = rospy.ServiceProxy(f'{self.ns}/mavros/set_mode', SetMode)
+            self.land_service=rospy.ServiceProxy(f"{self.ns}/mavros/cmd/land", CommandTOL)
             #self.attitude_pub = rospy.Publisher(f"{self.ns}/mavros/setpoint_raw/attitude", AttitudeTarget, queue_size=10)
     def orientation_cb(self, data):
         self.heading_data = data
