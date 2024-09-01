@@ -26,7 +26,7 @@ from mavros_msgs.srv import SetMode, SetModeRequest, CommandTOL, CommandBool, Co
 from sensor_msgs.msg import Imu, BatteryState
 from std_msgs.msg import Header, Float64
 from std_srvs.srv import Empty, EmptyRequest
-import mavros.setpoint
+#import mavros.setpoint
 from scipy import sparse as sp
 from scipy.stats.qmc import MultivariateNormalQMC
 from scipy.optimize import linear_sum_assignment
@@ -48,15 +48,18 @@ class Heuristic():
     def __init__(self):
         #env=gym.make('SUST_v3-v0')
         self.d_min = 30 # minimum turning radius
-        self.d = 40
-        self.r_cs = 10
+        self.d = 40 # keeping Distance
+        self.r_cs = 10 # Charging Radius
         self.C_rate = 2
-        self.D_rate = 0.41
-        self.Q = 22_000
-        self.v = 17
+        self.D_rate = 0.41 # 1/2.442 (Battery Runtime)
+        self.Q = 22_000 #[mAh] Battery Capacity
+        self.v = 17 # [m/s]
     def make_cost_matrix(self, obs, m , n):
+        # Create a list of keys for all UAV-target pairs
             keys = [f"uav{uav_id+1}_target{target_id+1}" for uav_id in range(m) for target_id in range(n)]
+        # Extract the relevant observations and convert to a Numpy array
             observations = np.array([obs[key][0] for key in keys]) # obs[0] distance
+        # Reshape the array into the cost matrix
             cost_matrix = observations.reshape(m, n)
             return cost_matrix
     def hungarian_assignment(self, cost_matrix):
@@ -81,7 +84,7 @@ class Heuristic():
         '''
         beta = np.arctan((r_t-self.d)/(self.d_min))
         r_charge = self.d_min*2*(np.pi - beta) + r_c + eps1
-        r_target = 2*np.pi(self.d_min+self.d) + 2*(r_t) + eps2
+        r_target = 2*np.pi*(self.d_min+self.d) + 2*(r_t) + eps2
         battery_to_charge = r_charge /self.v*(self.D_rate*self.Q/3600)
         battery_to_target = r_target / self.v*(self.D_rate*self.Q/3600)
         if battery < battery_to_charge:
@@ -92,17 +95,15 @@ class Heuristic():
         #     action = -1 ???
         return action
     # 3번 사용
-    def get_action_from_pairs(self, UAV_idx, Target_idx, m, n, obs, eps):
+    def get_action_from_pairs(self, UAV_idx, Target_idx, m, n, obs, eps1, eps2):
         battery = obs["battery"]
-        age = obs["age"]
-
         action = np.zeros(m, dtype=int)
         for uav_idx, target_idx in zip(UAV_idx, Target_idx):
             # action[uav_idx] = uav1_target1_heuristic(battery[uav_idx], age[target_idx], b1, b2, a1)*(target_idx+1)
             r_c = obs[f"uav{uav_idx+1}_charge_station"][0]
             r_t = obs[f"uav{uav_idx+1}_target{target_idx+1}"][0]
-            action[uav_idx] = self.uav1_target1_heuristic2(battery[uav_idx], age[target_idx], r_c, r_t, eps)*(target_idx+1)
-
+            u1t1_heuristic_action = self.uav1_target1_heuristic2(battery[uav_idx], r_c, r_t, eps1, eps2)
+            action[uav_idx] = -1 if u1t1_heuristic_action == -1 else u1t1_heuristic_action*(target_idx+1)
         if m > n: # in case of m > n: unselected uav stay charge even full battery
             unselected_uav_idx = np.setdiff1d(np.arange(m), UAV_idx) # returns the unique values in array1 that are not present in array2
             action[unselected_uav_idx] = 0
@@ -155,6 +156,9 @@ class Simulation():
     def __init__(self):
         self.m = 3 # UAV 개수 -- > 바꾸기.. 나중에 한 번에 시뮬레이션 하고 Graph 그리는 툴 필요
         self.n = 5 # FIXED!!
+        #Parameter
+        self.eps1 = 21 #Parameter 1
+        self.eps2 = 120 #Parameter 2
         self.uav_positions = []
         self.target_positions = []
     def save_positions_to_csv(self):
@@ -181,7 +185,7 @@ class Simulation():
         while truncated == False:
             step += 1
             #action = heuristic.high_age_first(obs, self.m)
-            action = heuristic.r_t_hungarian(obs, self.m, self.n, eps1 = 0, eps2 = 0)
+            action = heuristic.r_t_hungarian(obs, self.m, self.n, eps1 = self.eps1, eps2 = self.eps2)
             obs, reward, _, truncated, _ = env.step(action)
             episode_reward += reward
             bat = obs['battery']
