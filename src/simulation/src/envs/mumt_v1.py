@@ -20,7 +20,7 @@ from mavros_msgs.srv import SetMode, SetModeRequest, CommandTOL, CommandBool, Co
 from sensor_msgs.msg import Imu, BatteryState
 from std_msgs.msg import Header, Float64
 from std_srvs.srv import Empty, EmptyRequest
-import mavros.setpoint
+#import mavros.setpoint
 from scipy import sparse as sp
 from scipy.stats.qmc import MultivariateNormalQMC
 from scipy.optimize import linear_sum_assignment
@@ -109,11 +109,11 @@ class MUMT_v1(Env):
         current_file_path = os.path.dirname(os.path.abspath(__file__))
         #self.distance_keeping_result00 = np.load(current_file_path+ os.path.sep + "dkc_real_dt_0.05_2a_sig0_val_iter.npz")
 
-        self.distance_keeping_results = np.load(os.path.join(current_file_path, "dkc_r5.0_rt0.04_2a_sig0_val_iter.npz"))
+        self.distance_keeping_results = np.load(os.path.join(current_file_path, "dkc_real_dt_0.05_2a_sig0_val_iter.npz"))
         self.distance_keeping_straightened_policy00 = self.distance_keeping_results["policy"]
 
         #self.time_optimal_straightened_policy00 = np.load(current_file_path+ os.path.sep + "lengthened_toc_real_dt_0.05_2a_sig0_val_iter.npy")
-        self.time_optimal_straightened_policy00 = np.load(os.path.join(current_file_path, "lengthened_toc_r5.0_2a_sig0_val_iter.npy"))
+        self.time_optimal_straightened_policy00 = np.load(os.path.join(current_file_path, "lengthened_toc_real_dt_0.05_2a_sig0_val_iter.npy"))
 
         '''
         States Form
@@ -273,7 +273,9 @@ class MUMT_v1(Env):
         if self.uavs[uav_idx].battery <=0:
             pass
         else:
-            if action == 0:
+            if action == -1:
+                action = self.uavs[uav_idx].previous_action
+            elif action == 0:
                 print("Go to the Charging Station")
                 self.action_is_charge(uav_idx)
             else:
@@ -282,15 +284,51 @@ class MUMT_v1(Env):
                 print(f"uav_{uav_idx+1} Relative Value to Target is :::{self.rel_observation(uav_idx, action-1)[:2]}, Action is {self.w1_action[uav_idx]}")
                 self.publish_attitude(self.uavs[uav_idx], self.w1_action[uav_idx])
                 self.uavs[uav_idx].move() #그런데 w1_action은 x축 방향 각도
+                self.uavs[uav_idx].previous_action = 1
+
+    def landing(self, uav_idx):
+        print("LANDING...")
+        uav=self.uavs[uav_idx]
+        set_mode_service = uav.set_mode_client
+        landing_mode_request=uav.landing_mode_request
+        landing_mode_request.custom_mode = 'LAND'
+        try:
+            response = set_mode_service(landing_mode_request)
+            if response.mode_sent:
+                rospy.loginfo(f"{uav.ns}: LAND mode set successfully")
+            else:
+                rospy.logwarn(f"{uav.ns}: Failed to set LAND mode")
+        except rospy.ServiceException as e:
+            rospy.logerr(f"Service call to set LAND mode failed: {e}")
+        land_service = uav.land_service
+        landing_request = uav.landing_request
+        try:
+            response = land_service(landing_request)
+            if response.success:
+                rospy.loginfo(f"{uav.ns}: Landing initiated successfully")
+            else:
+                rospy.logwarn(f"{uav.ns}: Failed to initiate landing")
+        except rospy.ServiceException as e:
+            rospy.logerr(f"Service call to land failed: {e}")
+
+        # UAV의 현재 고도를 확인하고, 지면에 착륙할 때까지 대기
+        while True:
+            current_altitude = uav.local_position.pose.position.z
+            if current_altitude <= 0.1:
+                rospy.loginfo(f"{uav.ns} has successfully landed.")
+                break
+            rospy.sleep(0.1)
 
     def action_is_charge(self, uav_idx):
         if (self.uavs[uav_idx].obs[0]<self.r_c):
             self.uavs[uav_idx].charging = 1
+            self.landing(uav_idx)
             self.uavs[uav_idx].battery = min(self.Q, self.uavs[uav_idx].battery + self.C_rate*self.Q/3600/20) # 20 Hz
         else:
-            self.uavs[uav_idx].battery = max(0, self.uavs[uav_idx].battery - self.D_rate*self.Q/3600/20)
+            self.uavs[uav_idx].battery = max(0, self.uavs[uav_idx].battery - self.D_rate*self.Q/3600/20) # 20 Hz
             self.w1_action[uav_idx]=self.toc_get_action(self.uavs[uav_idx].obs[:2])
             self.uavs[uav_idx].move()
+        self.uavs[uav_idx].previous_action = 0
 
     #TODO(8) : UTILS Function
     def save_trajectories(self):
