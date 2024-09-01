@@ -279,12 +279,18 @@ class MUMT_v1(Env):
                 print("Go to the Charging Station")
                 self.action_is_charge(uav_idx)
             else:
-                self.uavs[uav_idx].battery = max(0, self.uavs[uav_idx].battery - self.D_rate*self.Q/3600/20)
-                self.w1_action[uav_idx] = self.dkc_get_action(self.rel_observation(uav_idx, action-1)[:2]) # 거리 & 알파값을 반환할 것
-                print(f"uav_{uav_idx+1} Relative Value to Target is :::{self.rel_observation(uav_idx, action-1)[:2]}, Action is {self.w1_action[uav_idx]}")
-                self.publish_attitude(self.uavs[uav_idx], self.w1_action[uav_idx])
-                self.uavs[uav_idx].move() #그런데 w1_action은 x축 방향 각도
-                self.uavs[uav_idx].previous_action = 1
+                if self.uavs[uav_idx].previous_action == 0 and self.uavs[uav_idx].is_landed == True:
+                    self.takeoff_uav(self.uavs[uav_idx])
+                    self.uavs[uav_idx].is_landed = False
+                    print("Charging is Finished, Take off Again")
+                    self.uavs[uav_idx].previous_action = 1
+                else:
+                    self.uavs[uav_idx].battery = max(0, self.uavs[uav_idx].battery - self.D_rate*self.Q/3600/20)
+                    self.w1_action[uav_idx] = self.dkc_get_action(self.rel_observation(uav_idx, action-1)[:2]) # 거리 & 알파값을 반환할 것
+                    print(f"uav_{uav_idx+1} Relative Value to Target is :::{self.rel_observation(uav_idx, action-1)[:2]}, Action is {self.w1_action[uav_idx]}")
+                    self.publish_attitude(self.uavs[uav_idx], self.w1_action[uav_idx])
+                    self.uavs[uav_idx].move() #그런데 w1_action은 x축 방향 각도
+                    self.uavs[uav_idx].previous_action = 1
 
     def landing(self, uav_idx):
         print("LANDING...")
@@ -316,18 +322,23 @@ class MUMT_v1(Env):
             current_altitude = uav.local_position.pose.position.z
             if current_altitude <= 0.1:
                 rospy.loginfo(f"{uav.ns} has successfully landed.")
+                uav.is_landed = True
                 break
             rospy.sleep(0.1)
 
     def action_is_charge(self, uav_idx):
         if (self.uavs[uav_idx].obs[0]<self.r_c):
             self.uavs[uav_idx].charging = 1
-            self.landing(uav_idx)
-            self.uavs[uav_idx].battery = min(self.Q, self.uavs[uav_idx].battery + self.C_rate*self.Q/3600/20) # 20 Hz
+            if self.uavs[uav_idx].is_landed == False:
+                self.landing(uav_idx)
+            else:
+                print(f"charging...current battery of UAV {uav_idx} is {self.uavs[uav_idx].battery}")
+                self.uavs[uav_idx].battery = min(self.Q, self.uavs[uav_idx].battery + self.C_rate*self.Q/3600/20) # 20 Hz
         else:
             self.uavs[uav_idx].battery = max(0, self.uavs[uav_idx].battery - self.D_rate*self.Q/3600/20) # 20 Hz
             self.w1_action[uav_idx]=self.toc_get_action(self.uavs[uav_idx].obs[:2])
             self.uavs[uav_idx].move()
+            self.publish_attitude(self.uavs[uav_idx], self.w1_action[uav_idx])
         self.uavs[uav_idx].previous_action = 0
 
     #TODO(8) : UTILS Function
@@ -401,6 +412,7 @@ class MUMT_v1(Env):
                 rospy.sleep(1)
                 break
         rospy.sleep(0.1)
+
     def toc_get_action(self, state):
         # S: 각 요소에 대한 인덱스 배열, P: 각 요소에 대한 가중치 배열
         S, P = self.states.computeBarycentric(state)
