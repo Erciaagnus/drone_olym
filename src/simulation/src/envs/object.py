@@ -34,7 +34,8 @@ from numpy import arctan2, array
 import re
 from mavros_msgs.srv import ParamSet, ParamSetRequest, ParamSetResponse
 from mavros_msgs.msg import ParamValue
-
+HIGHER_LEVEL_FREQUENCY = 0.1
+LOWER_LEVEL_FREQUENCY = 10
 def wrap(theta):
     if theta > math.pi:
         theta -= 2*math.pi
@@ -78,6 +79,7 @@ class UAV:
             rate= rospy.Rate(20)
             self.vel_target = TwistStamped()
             self.landing_request = CommandTOL()
+            self.is_landed = False
             self.previous_action = 0 # Previous Action if action==-1
             # SUBSCRIBER
             self.velocity_sub = rospy.Subscriber(f'{self.ns}/mavros/local_position/velocity', TwistStamped, self.velocity_cb)
@@ -198,7 +200,7 @@ class Target:
             return Target(state = self.state.copy(), age=self.age, initial_beta = self.initial_beta, target_type = self.target_type, sigma_rayleigh = self.sigma_rayleigh)
         def cal_age(self):
             if self.surveillance == 0:
-                self.age = min(self.max_age, self.age + 0.05) # 0.05 is Highr level control frequency
+                self.age = min(self.max_age, self.age + 1/HIGHER_LEVEL_FREQUENCY) # 0.05 is Highr level control frequency
             else:
                 self.age = 0
         def update_position(self):
