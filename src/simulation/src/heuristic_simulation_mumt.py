@@ -44,6 +44,8 @@ import random
 import pandas as pdf
 from simulation.src.envs.mumt_v1 import MUMT_v1
 import csv
+from tabulate import tabulate
+HIGHER_LEVEL_FREQUENCY = 0.1
 class Heuristic():
     def __init__(self):
         #env=gym.make('SUST_v3-v0')
@@ -85,14 +87,14 @@ class Heuristic():
         beta = np.arctan((r_t-self.d)/(self.d_min))
         r_charge = self.d_min*2*(np.pi - beta) + r_c + eps1
         r_target = 2*np.pi*(self.d_min+self.d) + 2*(r_t) + eps2
-        battery_to_charge = r_charge /self.v*(self.D_rate*self.Q/3600)
-        battery_to_target = r_target / self.v*(self.D_rate*self.Q/3600)
+        battery_to_charge = r_charge /self.v*(self.D_rate*self.Q/3600/HIGHER_LEVEL_FREQUENCY)
+        battery_to_target = r_target / self.v*(self.D_rate*self.Q/3600/HIGHER_LEVEL_FREQUENCY)
         if battery < battery_to_charge:
             action = 0
         elif battery> battery_to_target:
             action = 1
-        # else:
-        #     action = -1 ???
+        else:
+            action = -1
         return action
     # 3번 사용
     def get_action_from_pairs(self, UAV_idx, Target_idx, m, n, obs, eps1, eps2):
@@ -118,7 +120,7 @@ class Heuristic():
     #             action[unselected_uav_idx] = 0
     #         return action
     # Get action 1번
-    def r_t_hungarian(self, obs, m, n, eps1=0, eps2=0):
+    def r_t_hungarian(self, obs, m, n, eps1, eps2):
         uav_idx, target_idx = self.hungarian_assignment(self.make_cost_matrix(obs, m, n))
         action = self.get_action_from_pairs(uav_idx, target_idx, m, n, obs, eps1, eps2)
         return action
@@ -170,6 +172,16 @@ class Simulation():
             writer = csv.writer(file)
             writer.writerow(["x", "y"])
             writer.writerows(self.target_positions)
+    def print_uav_info(self, uav_id, location, observation, bat):
+        if location == "charge_station":
+            destination = "CHARGE STATION"
+            position = "-"
+        else:
+            destination = f"TARGET {location}"
+            position = self.target_positions[location-1]
+        distance = round(observation[0], 3)
+        angle = round(observation[1], 3)
+        return [uav_id, destination, position, distance, angle, bat]
 
     def run(self):
         self.target_pose = ([[800, 1430], [-1180, 700], [1200, 1300], [-1100, -1200], [800, -1120]], [0]*self.n)
@@ -188,24 +200,27 @@ class Simulation():
             action = heuristic.r_t_hungarian(obs, self.m, self.n, eps1 = self.eps1, eps2 = self.eps2)
             obs, reward, _, truncated, _ = env.step(action)
             episode_reward += reward
-            bat = obs['battery']
             age = obs['age']
-            print(f"step: {step} | battery: {bat} | reward: {episode_reward}")
-            print("##### ITRERATION IS FINISHED #####")
+            print(f"step: {step} | reward: {episode_reward}")
+            #print("##### ITRERATION IS FINISHED #####")
             #print(f'###################### action is {action}')
             uav_positions = env.uavs[0].state[:2]
             self.uav_positions.append(uav_positions)
+            table_data = []
             for i in range(self.m):
+                bat = obs[f'battery{i}']
                 for j in range(1, self.n+1):
                     if action[i] == 0:
-                        print(f"UAV{i+1} GO TO CHARGE STATION")
+                        # print(f"UAV{i+1} GO TO CHARGE STATION")
                         get_observation = obs[f'uav{i+1}_charge_station']
-                        print(f"Observation from {i+1} is {get_observation}")
+                        table_data.append(self.print_uav_info(i+1, "charget_station", get_observation, bat))
+                        #print(f"Distance :: {get_observation[0]}, Angle :: {get_observation[1]}")
                     if action[i] == j:
-                        print(f"UAV{i+1} GO TO TARGET {j}:: {self.target_positions[j-1]}")
+                        # print(f"[UAV{i+1} : TARGET {j}] :: {self.target_positions[j-1]}")
                         get_observation = obs[f'uav{i+1}_target{j}']
-                        print(f"Observation from {i+1} is {get_observation}")
+                        table_data.append(self.print_uav_info(i+1, j, get_observation, bat))
             #env.publish_rviz_poses()
+            print(tabulate(table_data, headers=["UAV ID", "Destination", "Target Position", "Distance", "Angle", "Battery"], tablefmt="pretty"))
             rospy.sleep(0.1)
         total_time_step += step
         reward_per_step = episode_reward / total_time_step

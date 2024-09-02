@@ -6,6 +6,7 @@ import sys
 import time
 import argparse
 import pickle
+import h5py
 current_file_path = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_file_path + os.path.sep + "gym")
 current_file_path = os.path.dirname(__file__)
@@ -38,6 +39,8 @@ from object import UAV, Target
 import threading
 import rospkg
 import os
+HIGHER_LEVEL_FREQUENCY = 0.1
+LOWER_LEVEL_FREQUENCY = 10
 def wrap(theta):
     if theta > math.pi:
         theta -= 2*math.pi
@@ -45,7 +48,7 @@ def wrap(theta):
         theta += 2*math.pi
     return theta
 class MUMT_v1(Env):
-    def __init__(self, r_max=5000, r_min=10, dt=0.05, d=40.0, l=3, m=3, n=5, r_c=10, max_step=180_000, seed=None):
+    def __init__(self, r_max=5000, r_min=10, dt=0.05, d=40.0, l=3, m=3, n=5, r_c=10, max_step=72*360, seed=None):
         #TODO(1): Parameters
         self.Q = 22_000 #[mAh] battery capacity
         self.C_rate = 2
@@ -96,7 +99,7 @@ class MUMT_v1(Env):
             obs_space[key] = Box(low=np.float32([0, -np.pi]),
                                  high = np.float32([r_max, np.pi]),
                                  dtype=np.float32)
-        obs_space["battery"] = Box(low=np.float32([0]*m),
+        obs_space[f"battery{uav_id}"] = Box(low=np.float32([0]*m),
                                    high = np.float32([self.Q]*m),
                                    dtype=np.float32)
         obs_space["age"] = Box(low=np.float32([0]*n),
@@ -220,20 +223,22 @@ class MUMT_v1(Env):
 #######################################################################################
     def step(self, action):
         try:
+            start_time = time.time()
             terminal = False
             truncated = False
             action = np.squeeze(action)
             reward = 0
             if action.ndim == 0:
                 action = np.expand_dims(action, axis = 0)
-            threads = []
-            print("####################################", action)
-            for uav_idx, uav_action in enumerate(action): #i번째 UAV, j번쨰 Target
-                thread = threading.Thread(target=self.control_uav_thread, args=(uav_idx, uav_action))
-                thread.start()
-                threads.append(thread)
-            for thread in threads:
-                thread.join()
+            for _ in range(LOWER_LEVEL_FREQUENCY):
+                threads = []
+                #print("Action is", action)
+                for uav_idx, uav_action in enumerate(action): #i번째 UAV, j번쨰 Target
+                    thread = threading.Thread(target=self.control_uav_thread, args=(uav_idx, uav_action))
+                    thread.start()
+                    threads.append(thread)
+                for thread in threads:
+                    thread.join()
 
             #TODO(7) : 목표 대상 감시 여부(진행) 확인.
             surveillance_matrix = np.zeros((self.m, self.n)) # mxn Correspondence
@@ -255,6 +260,8 @@ class MUMT_v1(Env):
             reward = reward / self.n # Average Reward of All targets
 
             self.step_count += 1
+            end_time = time.time()
+            print(f"Step Duration :: ", end_time-start_time)
             if self.step_count >= self.max_step:
                 truncated = True
             return self.dict_observation, reward, terminal, truncated, {}
@@ -285,9 +292,9 @@ class MUMT_v1(Env):
                     print("Charging is Finished, Take off Again")
                     self.uavs[uav_idx].previous_action = 1
                 else:
-                    self.uavs[uav_idx].battery = max(0, self.uavs[uav_idx].battery - self.D_rate*self.Q/3600/20)
+                    self.uavs[uav_idx].battery = max(0, self.uavs[uav_idx].battery - self.D_rate*self.Q/3600/LOWER_LEVEL_FREQUENCY*HIGHER_LEVEL_FREQUENCY)
                     self.w1_action[uav_idx] = self.dkc_get_action(self.rel_observation(uav_idx, action-1)[:2]) # 거리 & 알파값을 반환할 것
-                    print(f"uav_{uav_idx+1} Relative Value to Target is :::{self.rel_observation(uav_idx, action-1)[:2]}, Action is {self.w1_action[uav_idx]}")
+                    #print(f"uav_{uav_idx+1} Relative Value to Target is :::{self.rel_observation(uav_idx, action-1)[:2]}, Action is {self.w1_action[uav_idx]}")
                     self.publish_attitude(self.uavs[uav_idx], self.w1_action[uav_idx])
                     self.uavs[uav_idx].move() #그런데 w1_action은 x축 방향 각도
                     self.uavs[uav_idx].previous_action = 1
@@ -333,25 +340,36 @@ class MUMT_v1(Env):
                 self.landing(uav_idx)
             else:
                 print(f"charging...current battery of UAV {uav_idx} is {self.uavs[uav_idx].battery}")
-                self.uavs[uav_idx].battery = min(self.Q, self.uavs[uav_idx].battery + self.C_rate*self.Q/3600/20) # 20 Hz
+                self.uavs[uav_idx].battery = min(self.Q, self.uavs[uav_idx].battery + self.C_rate*self.Q/3600/LOWER_LEVEL_FREQUENCY*HIGHER_LEVEL_FREQUENCY) # 20 Hz
         else:
-            self.uavs[uav_idx].battery = max(0, self.uavs[uav_idx].battery - self.D_rate*self.Q/3600/20) # 20 Hz
+            self.uavs[uav_idx].battery = max(0, self.uavs[uav_idx].battery - self.D_rate*self.Q/3600/LOWER_LEVEL_FREQUENCY*HIGHER_LEVEL_FREQUENCY) # 20 Hz
             self.w1_action[uav_idx]=self.toc_get_action(self.uavs[uav_idx].obs[:2])
             self.uavs[uav_idx].move()
             self.publish_attitude(self.uavs[uav_idx], self.w1_action[uav_idx])
         self.uavs[uav_idx].previous_action = 0
 
     #TODO(8) : UTILS Function
+    # def save_trajectories(self):
+    #     directory = os.path.join(self.package_path, 'traj')
+    #     if not os.path.exists(directory):
+    #         os.makedirs(directory)
+    #     filename = f'{directory}/uav_trajectory_m_{self.m}_seed_{self.seed}.pkl'
+    #     with open(filename, 'wb') as file:
+    #         pickle.dump(self.uav_trajectory_data, file)
+    #     #print(f"Trajecotry saved in {filename}")
     def save_trajectories(self):
-        directory = os.path.join(self.package_path, 'traj')
+        directory = os.path.join(self.package_path, 'traj') 
         if not os.path.exists(directory):
             os.makedirs(directory)
-        filename = f'{directory}/uav_trajectory_m_{self.m}_seed_{self.seed}.pkl'
-        with open(filename, 'wb') as file:
-            pickle.dump(self.uav_trajectory_data, file)
-        #print(f"Trajecotry saved in {filename}")
+        filename = f'{directory}/uav_trajectory_m_{self.m}_seed_{self.seed}.h5'  # HDF5 파일로 저장
+
+        with h5py.File(filename, 'w') as file:
+            for i, uav_data in enumerate(self.uav_trajectory_data):
+                file.create_dataset(f'uav_{i}', data=np.array(uav_data))
+
+
     def publish_attitude(self, uav, yaw_rate):
-        print(f"X_veloctiy :: {self.v*sin(uav.state[2])}, Y_velocity :: {self.v*cos(uav.state[2])}")
+        #print(f"X_veloctiy :: {self.v*sin(uav.state[2])}, Y_velocity :: {self.v*cos(uav.state[2])}")
         uav.vel_target.twist.linear.x = self.v*sin(uav.state[2])
         uav.vel_target.twist.linear.y = self.v*cos(uav.state[2])
         uav.vel_target.twist.linear.z = 0
@@ -477,7 +495,7 @@ class MUMT_v1(Env):
             key = f"uav{uav_id+1}_charge_station"
             dictionary_obs[key] = self.uavs[uav_id].obs[:2]
 
-        dictionary_obs["battery"] = np.float32([self.uavs[uav_id].battery for uav_id in range(self.m)])
+        dictionary_obs[f"battery{uav_id}"] = np.float32([self.uavs[uav_id].battery for uav_id in range(self.m)])
         dictionary_obs["age"] = np.float32([self.targets[target_id].age for target_id in range(self.n)])
 
         return dictionary_obs
