@@ -34,7 +34,7 @@ from numpy import arctan2, array
 import re
 from mavros_msgs.srv import ParamSet, ParamSetRequest, ParamSetResponse
 from mavros_msgs.msg import ParamValue
-HIGHER_LEVEL_FREQUENCY = 0.1
+HIGHER_LEVEL_FREQUENCY = 1
 LOWER_LEVEL_FREQUENCY = 10
 def wrap(theta):
     if theta > math.pi:
@@ -73,8 +73,7 @@ class UAV:
             self.local_velocity = TwistStamped()
             self.global_velocity = TwistStamped()
             self.gps_data = NavSatFix()
-            self.roll=0
-            self.pitch = 0
+            self.current_velocity = None
             self.heading_data = Float64()
             rate= rospy.Rate(20)
             self.vel_target = TwistStamped()
@@ -101,10 +100,15 @@ class UAV:
         self.heading_data = data
         #rospy.loginfo(f"UAV {self.uav_id} heading data: {self.heading_data.data}")
     def velocity_cb(self, data):
+        rospy.loginfo("Velocity callback triggered")
+
         self.vel_target.twist.linear.x = data.twist.linear.x
         self.vel_target.twist.linear.y = data.twist.linear.y
         self.vel_target.twist.linear.z = data.twist.linear.z
         self.vel_target.twist.angular.z = data.twist.angular.z
+        self.current_velocity = data.twist
+        print("current velocity", np.sqrt(self.current_velocity.linear.x**2+self.current_velocity.linear.y**2))
+
 
     def gps_cb(self, data):
         self.gps_data = data
@@ -172,7 +176,7 @@ class UAV:
         return euler
 class Target:
         _id_counter = 0
-        max_age = 72*3600
+        max_age = 8*3600
         def __init__(self, state, age=0, initial_beta = 0, initial_r = 1000, target_type = 'static', sigma_rayleigh = 0.5, m=None, seed = None ):
             self.dt = 0.05
             self.state = state
@@ -198,9 +202,9 @@ class Target:
             ])
         def copy(self):
             return Target(state = self.state.copy(), age=self.age, initial_beta = self.initial_beta, target_type = self.target_type, sigma_rayleigh = self.sigma_rayleigh)
-        def cal_age(self):
+        def cal_age(self, duration_time):
             if self.surveillance == 0:
-                self.age = min(self.max_age, self.age + 1/HIGHER_LEVEL_FREQUENCY) # 0.05 is Highr level control frequency
+                self.age = min(self.max_age, self.age + duration_time) # 1초에 한 번씩이지? 0.05 is Highr level control frequency
             else:
                 self.age = 0
         def update_position(self):
