@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- Define the number of UAVs-->
+    <arg name = "num_uavs" default = "3" />
+    <!-- <env name="PX4_SIM_SPEED_FACTOR" value="3.0" /> -->
+    <!-- Include the SITL Launch file -->
+    <include file="$(find px4)/launch/multi_uav_mavros_sitl.launch">
+        <!-- <arg name="PX4_SIM_SPEED_FACTOR" value="3.0"/> -->
+    </include>
+    <!-- Loop to create multiple UAV nodes -->
+    <env name = "index" value="0"/>
+    <while arg="$(eval index &lt; int(num_uavs))">
+        <group ns="uav$(env index)">
+            <!-- <node pkg="mavros" type="mavros_node" name="mavros" output="screen">
+                <param name="COM_DL_LOSS_T" value="100"/>
+                <param name="MPC_XY_VEL_MAX" value="20.0"/>
+            </node> -->
+            <node pkg="simulation" type="object.py" name="uav$(env index)_controller" output="screen">
+                <!-- Add any node-specific parameters here -->
+            </node>
+        </group>
+        <env name="index" value="$(eval int(index) + 1)"/>
+    </while>
+    <node pkg="simulation" type="heuristic_simulation_mumt.py" name="heuristic_py" required="true" output="screen" />
+</launch>

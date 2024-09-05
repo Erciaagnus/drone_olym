@@ -34,13 +34,18 @@ from numpy import arctan2, array
 import re
 from mavros_msgs.srv import ParamSet, ParamSetRequest, ParamSetResponse
 from mavros_msgs.msg import ParamValue
+HIGHER_LEVEL_FREQUENCY = 1
+LOWER_LEVEL_FREQUENCY = 10
 def wrap(theta):
     if theta > math.pi:
         theta -= 2*math.pi
     elif theta < -math.pi:
         theta += 2*math.pi
     return theta
-
+'''
+        UAV STATE는 절대좌표계 x, y값 및 Yaw Angle
+        나머지 처리되는 계산 각도들은 전부 X축 기준 각도
+'''
 class UAV:
     def __init__(self, ns, state, v=17, battery=None):
         #TODO(1) UAV CLASS INITIALIZATION, UTILS FUNCTION
@@ -61,31 +66,49 @@ class UAV:
             self.local_position = PoseStamped()
             self.current_state = State()
             self.offb_set_mode = SetModeRequest()
+            self.landing_mode_request = SetModeRequest()
             self.arm_cmd = CommandBoolRequest()
             self.arm_cmd.value = True
             self.imu_data = Imu()
             self.local_velocity = TwistStamped()
             self.global_velocity = TwistStamped()
             self.gps_data = NavSatFix()
-
-
+            self.current_velocity = None
+            self.heading_data = Float64()
+            rate= rospy.Rate(20)
+            self.vel_target = TwistStamped()
+            self.landing_request = CommandTOL()
+            self.is_landed = False
+            self.previous_action = 0 # Previous Action if action==-1
             # SUBSCRIBER
+            self.velocity_sub = rospy.Subscriber(f'{self.ns}/mavros/local_position/velocity', TwistStamped, self.velocity_cb)
             self.state_sub = rospy.Subscriber(f"{self.ns}/mavros/state", State, self.state_cb, queue_size=10)
             self.attitude_sub = rospy.Subscriber(f"{self.ns}/mavros/setpoint_raw/attitude", AttitudeTarget, self.update_orientation, queue_size=10)
             self.pose_sub = rospy.Subscriber(f"{self.ns}/mavros/local_position/pose", PoseStamped, self.update_pose, queue_size=10)
-            self.imu_sub = rospy.Subscriber(f"{self.ns}/mavros/imu/data", Imu, self.imu_cb, queue_size=10)
             self.gps_sub = rospy.Subscriber(f"{self.ns}/mavros/global_position/global", NavSatFix, self.gps_cb, queue_size=10)
+            self.heading_sub = rospy.Subscriber(f"{self.ns}/mavros/global_position/compass_hdg", Float64, self.orientation_cb)
             # PUBLISHER
             self.local_pos_pub = rospy.Publisher(f"{self.ns}/mavros/setpoint_position/local", PoseStamped, queue_size=10)
             self.local_vel_pub = rospy.Publisher(f"{self.ns}/mavros/setpoint_velocity/cmd_vel", TwistStamped, queue_size=10)
             self.attitude_pub = rospy.Publisher(f"{self.ns}/mavros/setpoint_raw/attitude", AttitudeTarget, queue_size=10)
-
             # Service proxies # UAV
             self.arming_client = rospy.ServiceProxy(f'{self.ns}/mavros/cmd/arming', CommandBool)
             self.set_mode_client = rospy.ServiceProxy(f'{self.ns}/mavros/set_mode', SetMode)
-            self.attitude_pub = rospy.Publisher(f"{self.ns}/mavros/setpoint_raw/attitude", AttitudeTarget, queue_size=10)
-    def imu_cb(self, data):
-        self.imu_data = data
+            self.land_service=rospy.ServiceProxy(f"{self.ns}/mavros/cmd/land", CommandTOL)
+            #self.attitude_pub = rospy.Publisher(f"{self.ns}/mavros/setpoint_raw/attitude", AttitudeTarget, queue_size=10)
+    def orientation_cb(self, data):
+        self.heading_data = data
+        #rospy.loginfo(f"UAV {self.uav_id} heading data: {self.heading_data.data}")
+    def velocity_cb(self, data):
+        rospy.loginfo("Velocity callback triggered")
+
+        self.vel_target.twist.linear.x = data.twist.linear.x
+        self.vel_target.twist.linear.y = data.twist.linear.y
+        self.vel_target.twist.linear.z = data.twist.linear.z
+        self.vel_target.twist.angular.z = data.twist.angular.z
+        self.current_velocity = data.twist
+        print("current velocity", np.sqrt(self.current_velocity.linear.x**2+self.current_velocity.linear.y**2))
+
 
     def gps_cb(self, data):
         self.gps_data = data
@@ -97,6 +120,7 @@ class UAV:
 
     def update_pose(self, msg):
             self.local_position = msg # Current Position
+            self.pose = msg
             self.local_position_boolean = True
             #print("GET MESSAGE")
         # Setpoint Publishing MUST be faster than 2Hz
@@ -129,27 +153,34 @@ class UAV:
     @property
     def obs(self):
             x, y = self.state[:2]
-            r = np.sqrt(x**2 + y**2)
-            alpha = wrap(np.arctan2(y, x) - wrap(self.state[-1]) - math.pi)
-            beta = arctan2(y, x)
+            r = np.sqrt(x**2 + y**2) # self.state[2] = theta
+            alpha = wrap(np.arctan2(y, x) - self.convert_angle_from_euler(self.state[-1]) - math.pi) #state에 저장되는 건 yaw angle?
+            beta = arctan2(y, x) # Criteria : X Axis
             return np.array([r, alpha, beta], dtype=np.float32)
     def copy(self):
             return UAV(ns=self.ns, state=self.state.copy(), v=self.v, battery=self.battery)
-    def move(self, action):
+    def move(self):
         # self.state[0] : x 좌표
         # self.state[1] : y 좌표
         # self.state[2] : orientation 정보
-        self.state[0] = self.pose.pose.position.x
-        self.state[1] = self.pose.pose.position.y
-        orientation = self.attitude_target.orientation
-        _, _, yaw = euler_from_quaternion([orientation.x, orientation.y, orientation.z, orientation.w])
+        self.state[0] = self.local_position.pose.position.x
+        self.state[1] = self.local_position.pose.position.y
+        yaw = self.heading_data.data * pi / 180 # Degree to Radian
         self.state[2] = yaw
-        print("Update the UAV STATE INFO ::: ", self.state)
+    def convert_angle_from_euler(self, theta):
+        euler = pi/2 - theta
+        if euler > pi:
+            euler -= 2*pi
+        elif euler < -pi:
+            euler += 2*pi
+        return euler
 class Target:
         _id_counter = 0
-        def __init__(self, state, age=0, initial_beta = 0, initial_r = 30, target_type = 'static', sigma_rayleigh = 0.5, m=None, seed = None ):
+        max_age = 8*3600
+        def __init__(self, state, age=0, initial_beta = 0, initial_r = 1000, target_type = 'static', sigma_rayleigh = 0.5, m=None, seed = None ):
             self.dt = 0.05
             self.state = state
+            # self.max_age = 72*3600
             self.surveillance = None
             self.age = age
             self.initial_beta = initial_beta
@@ -171,9 +202,9 @@ class Target:
             ])
         def copy(self):
             return Target(state = self.state.copy(), age=self.age, initial_beta = self.initial_beta, target_type = self.target_type, sigma_rayleigh = self.sigma_rayleigh)
-        def cal_age(self):
+        def cal_age(self, duration_time):
             if self.surveillance == 0:
-                self.age = min(1000, self.age + 1)
+                self.age = min(self.max_age, self.age + duration_time) # 1초에 한 번씩이지? 0.05 is Highr level control frequency
             else:
                 self.age = 0
         def update_position(self):

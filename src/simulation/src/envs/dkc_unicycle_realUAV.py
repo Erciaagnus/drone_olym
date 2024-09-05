@@ -10,56 +10,42 @@ from gym import Env
 from gym.spaces import Box
 from gym.utils import seeding
 from numpy import arctan2, array, cos, pi, sin
-# import rendering
+#import rendering
+from icecream import ic
 
 warnings.filterwarnings("ignore")
 
+CONTROL_FREQUENCY = 20
+
 class DKC_real_Unicycle(Env):
     metadata = {"render.modes": ["human", "rgb_array"], "video.frames_per_second": 30}
-
+    # Gazebo
+    v=17 #[m/s]
+    d=40 #[m] keeping distance > d_min
+    d_min=30 #[m] minimum turing radius
+    r_max=5_000#[m]
+    r_min=10 # ~ r_c in 1u1t/mumt
     def __init__(
         # [m/s]
         self,
-        # Strix 425
-        # r_max=4_000, #communication max=80_000, but from r>~4*d solution is the same.
-        # r_min=0.0,
-        # sigma=0.0,
-        # dt=0.02, # 50hz
-        # v=75_000/3600, # 75km/h -> m/s
-        # d=1000,
-        # d_min=370,
-        # k1=0.0181,
-        # max_step=24*1e4, # round(r_max/(v*dt)*1.1) #1.1 times is to give sufficient time for the UAV to travel from the end of the map to the target and circle at least once
-
-        # LARUS
-        r_max=15_000, #communication max=80_000, but from r>~4*d solution is the same.
-        r_min=0.0,
+        # Gazebo
         sigma=0.0,
-        dt=0.02, # 50hz
-        v=43_000/3600, # 75km/h -> m/s
-        d=100,
-        d_min=40,
-        k1=0.0181,
-        max_step=65*1e3 # round(r_max/(v*dt)*1.1) #1.1 times is to give sufficient time for the UAV to travel from the end of the map to the target and circle at least once
+        dt=1/CONTROL_FREQUENCY, # 20hzs
+        max_step=7630 # round(r_max/(v*dt) + 2*pi*d_min) # +2*pi*d_min is to give sufficient time for the UAV to travel from the end of the map to the target and circle at least once
     ):
         # [km/s]
         self.viewer = None
         self.dt = dt
-        self.v = v/1000
         self.vdt = self.v * dt
-        self.d = d/1000
-        self.d_min = d_min/1000
-        self.r_min = r_min/1000
-        self.r_max = r_max/1000
         self.omega_max = self.v / self.d_min
         self.observation_space = Box(
-            low=array([self.r_min, -pi]), high=array([self.r_max, pi]), dtype=np.float32
+            low=array([self.r_min, -pi]), high=array([self.r_max, pi]), dtype=np.float64
         )
         self.action_space = Box(
-            low=array([-self.omega_max]), high=array([self.omega_max]), dtype=np.float32
+            low=array([-self.omega_max]), high=array([self.omega_max]), dtype=np.float64
         )
         self.sigma = sigma
-        self.k1 = k1
+        # self.k1 = k1
         self.max_step = max_step
         self.step_count = None
         self.state = None
@@ -107,7 +93,8 @@ class DKC_real_Unicycle(Env):
         obs = self.observation
         # terminal = obs[0] > self.observation_space.high[0]
         # terminal = obs[0] < self.observation_space.low[0]
-        reward = self.k1 * (obs[0] - self.d) ** 2 + (-self.v * cos(obs[1])) ** 2
+        # reward = self.k1 * (obs[0] - self.d) ** 2 + (-self.v * cos(obs[1])) ** 2
+        reward = (obs[0] - self.d) ** 2
         reward = -reward
         if self.step_count > self.max_step:
             truncated = True
@@ -122,25 +109,26 @@ class DKC_real_Unicycle(Env):
 
     def render(self, mode="human"):
         if self.viewer is None:
-            self.viewer = rendering.Viewer(1000, 1000)
-            bound = self.observation_space.high[0] * 1.05
+            #self.viewer = rendering.Viewer(1000, 1000)
+            bound = self.observation_space.high[0] * 1.05/10 # for original scale, remove /10
             self.viewer.set_bounds(-bound, bound, -bound, bound)
         x, y, theta = self.state
         target = self.viewer.draw_circle(radius=self.r_min, filled=True)
         target.set_color(1, 0.6, 0)
         circle = self.viewer.draw_circle(radius=self.d, filled=False)
         circle.set_color(1,1,1)
-        tf = rendering.Transform(translation=(x, y), rotation=theta)
-        tri = self.viewer.draw_polygon(self.scale_points([(-0.8, 0.8), (-0.8, -0.8), (1.6, 0)], 1/10))
+        #tf = rendering.Transform(translation=(x, y), rotation=theta)
+        tri = self.viewer.draw_polygon(self.scale_points([(-0.8, 0.8), (-0.8, -0.8), (1.6, 0)], 10))
         tri.set_color(0.5, 0.5, 0.9)
-        tri.add_attr(tf)
+        #tri.add_attr(tf)
         return self.viewer.render(return_rgb_array=mode == "rgb_array")
 
     @property
     def observation(self):
-        x, y = self.state[:2] #+ self.sigma * self.np_random.randn(2)  # self.sigma=0 anyways
-        r = (x**2 + y**2) ** 0.5
-        alpha = wrap(arctan2(y, x) - wrap(self.state[-1]) - pi)
+        x, y, theta = self.state #+ self.sigma * self.np_random.randn(2)  # self.sigma=0 anyways
+        r = np.sqrt(x**2 + y**2)
+        beta = arctan2(y, x)
+        alpha = wrap(beta - theta - pi)
         return array([r, alpha])
 
     def close(self):
@@ -166,7 +154,7 @@ if __name__ == '__main__':
     print("state_sample: ", state_sample)
 
     print('uav_env.observation_space:', uav_env.observation_space)
-    
+
     step = 0
     uav_env.reset()
     while step < 5000:
