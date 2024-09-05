@@ -661,35 +661,42 @@ class States: # Distance, Heading Angle, Age, Battery
         indices = np.zeros((1,), dtype=int)
         probs = np.ones((1,), dtype=self.dtype)
         for dim, (idx, prob) in enumerate(zip(i, p)):
-            # Indices
-            #print("indices:", indices, "shape:", indices.shape)
-            #print("idx:", idx, "shape:", idx.shape)
-            #print("prob:", prob, "shape:", prob.shape)
-            indices = indices.flatten()
-            idx = idx.flatten()
-            prob = prob.flatten()
-            # Repeat and tile with compatible shape
-            repeated_indices = np.repeat(indices, len(idx))
-            tiled_idx = np.tile(idx, len(indices))
-            #print("repeated_indices:", repeated_indices, "shape:", repeated_indices.shape)
-            #print("tiled_idx:", tiled_idx, "shape", tiled_idx.shape)
-
-            if repeated_indices.shape == tiled_idx.shape:
-                indices = repeated_indices + tiled_idx
-            else:
-                raise ValueError(f"Shapes are not compatible for broadcasting: {repeated_indices.shape}, {tiled_idx.shape}")
-            #indices = np.repeat(indices, len(idx)) + np.tile(idx, len(indices))
-            # probability
-            if dim < len(self.shape) - 1:
+            indices = np.repeat(indices, len(idx)) + np.tile(idx, len(indices))
+            if dim < len(self.shape) - 1: # multi-dimension indices into 1d array index
                 indices *= self.shape[dim + 1]
-            repeated_probs = np.repeat(probs, len(idx))
-            tiled_prob = np.tile(prob, len(probs))
-            if repeated_probs.shape == tiled_prob.shape:
-                probs = repeated_probs * tiled_prob
-            else:
-                raise ValueError(f"Shapes are not compatible for broadcasting:  {repeated_probs.shape}, {tiled_prob.shape}")
-            #probs = np.repeat(probs, len(idx)) * np.tile(prob, len(probs))
+            probs = np.repeat(probs, len(idx)) * np.tile(prob, len(probs))
         return indices, probs
+
+        # for dim, (idx, prob) in enumerate(zip(i, p)):
+        #     # Indices
+        #     #print("indices:", indices, "shape:", indices.shape)
+        #     #print("idx:", idx, "shape:", idx.shape)
+        #     #print("prob:", prob, "shape:", prob.shape)
+        #     indices = indices.flatten()
+        #     idx = idx.flatten()
+        #     prob = prob.flatten()
+        #     # Repeat and tile with compatible shape
+        #     repeated_indices = np.repeat(indices, len(idx))
+        #     tiled_idx = np.tile(idx, len(indices))
+        #     #print("repeated_indices:", repeated_indices, "shape:", repeated_indices.shape)
+        #     #print("tiled_idx:", tiled_idx, "shape", tiled_idx.shape)
+
+        #     if repeated_indices.shape == tiled_idx.shape:
+        #         indices = repeated_indices + tiled_idx
+        #     else:
+        #         raise ValueError(f"Shapes are not compatible for broadcasting: {repeated_indices.shape}, {tiled_idx.shape}")
+        #     #indices = np.repeat(indices, len(idx)) + np.tile(idx, len(indices))
+        #     # probability
+        #     if dim < len(self.shape) - 1:
+        #         indices *= self.shape[dim + 1]
+        #     repeated_probs = np.repeat(probs, len(idx))
+        #     tiled_prob = np.tile(prob, len(probs))
+        #     if repeated_probs.shape == tiled_prob.shape:
+        #         probs = repeated_probs * tiled_prob
+        #     else:
+        #         raise ValueError(f"Shapes are not compatible for broadcasting:  {repeated_probs.shape}, {tiled_prob.shape}")
+        #     #probs = np.repeat(probs, len(idx)) * np.tile(prob, len(probs))
+        # return indices, probs
 
     def index(self, state):
 
