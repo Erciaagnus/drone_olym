@@ -96,7 +96,7 @@ class Heuristic():
         elif battery> battery_to_target:
             action = 1
         else:
-            action = -1
+            action = -1 # 애매할 때,
         return action
     # 3번 사용
     def get_action_from_pairs(self, UAV_idx, Target_idx, m, n, obs, eps1, eps2, duration_time):
@@ -153,18 +153,20 @@ class Simulation():
         if location == "charge_station":
             destination = "CHARGE STATION"
             position = "[0, 0]"
+            #print("SUCCESSFUL")
         else:
             destination = f"TARGET {location}"
             position = self.target_positions[location-1]
         distance = float(f"{observation[0]:.3f}") #round(observation[0], 3)
         angle = float(f"{observation[1]:.3f}")#round(observation[1], 3)
+        #print(f"test ######### {distance}, {angle}")
         return [uav_id, destination, position, distance, angle, bat]
 
     def run(self):
         self.target_pose = ([[800, 1430], [-1180, 700], [1200, 1300], [-1100, -1200], [800, -1120]], [0]*self.n)
         env = MUMT_v1(m=self.m, n=self.n)
         #start_time = time.time()
-        obs, _ = env.reset(uav_pose = None, target_pose = self.target_pose, batteries=[9000, 9000, 9000])
+        obs, _ = env.reset(uav_pose = None, target_pose = self.target_pose, batteries=[1200, 1200, 1200])
         heuristic = Heuristic()
         truncated =False
         total_time_step = 0
@@ -195,6 +197,11 @@ class Simulation():
             table_data = []
             added_uavs = set()  # 이미 표에 추가된 UAV를 기록하는 집합
             for i in range(self.m):
+                if action[i] == -1:
+                    print("OOPS, USING PREVIOUS VALUE")
+                    #print("#### ", env.uavs[i].previous_lower_action)
+                    action[i] = env.uavs[i].previous_lower_action
+                    #print(f"UAV{i} is action {action[i]}")
                 if action[i] == 0:
                         # print(f"UAV{i+1} GO TO CHARGE STATION")
                         get_observation = obs[f'uav{i+1}_charge_station']
@@ -202,11 +209,10 @@ class Simulation():
                             table_data.append(self.print_uav_info(i+1, "charge_station", get_observation, bat[i]))
                             added_uavs.add(i+1)
                 else:
-                    for j in range(1, self.n+1):        #print(f"Distance :: {get_observation[0]}, Angle :: {get_observation[1]}")
-                        if action[i] == j:
-                            # print(f"[UAV{i+1} : TARGET {j}] :: {self.target_positions[j-1]}")
-                            get_observation = obs[f'uav{i+1}_target{j}']
-                            table_data.append(self.print_uav_info(i+1, j, get_observation, bat[i]))
+                    j = action[i]
+                    # print(f"[UAV{i+1} : TARGET {j}] :: {self.target_positions[j-1]}")
+                    get_observation = obs[f'uav{i+1}_target{j}']
+                    table_data.append(self.print_uav_info(i+1, j, get_observation, bat[i]))
                 #env.publish_rviz_poses()
             print(tabulate(table_data, headers=["UAV ID", "Destination", "Target Position", "Distance", "Angle", "Battery"], tablefmt="pretty"))
             rate.sleep()
