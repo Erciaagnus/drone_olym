@@ -79,7 +79,9 @@ class UAV:
             self.vel_target = TwistStamped()
             self.landing_request = CommandTOL()
             self.is_landed = False
-            self.previous_action = 0 # Previous Action if action==-1
+            self.request_land = False
+            self.previous_upper_action = 0 # Previous Action if action==-1
+            self.previous_lower_action = None
             # SUBSCRIBER
             self.velocity_sub = rospy.Subscriber(f'{self.ns}/mavros/local_position/velocity', TwistStamped, self.velocity_cb)
             self.state_sub = rospy.Subscriber(f"{self.ns}/mavros/state", State, self.state_cb, queue_size=10)
@@ -152,13 +154,22 @@ class UAV:
         return False
     @property
     def obs(self):
-            x, y = self.state[:2]
+            uav_x = self.local_position.pose.position.x
+            uav_y = self.local_position.pose.position.y
+            euler_theta = self.heading_data.data*pi/180
+            target_x = 0
+            target_y = 0
+            x = uav_x - target_x
+            y = uav_y - target_y
             r = np.sqrt(x**2 + y**2) # self.state[2] = theta
-            alpha = wrap(np.arctan2(y, x) - self.convert_angle_from_euler(self.state[-1]) - math.pi) #state에 저장되는 건 yaw angle?
-            beta = arctan2(y, x) # Criteria : X Axis
+            beta = arctan2(y,x)
+            theta = self.convert_angle_from_euler(euler_theta)
+            alpha = wrap(beta - theta - math.pi)
             return np.array([r, alpha, beta], dtype=np.float32)
+
     def copy(self):
             return UAV(ns=self.ns, state=self.state.copy(), v=self.v, battery=self.battery)
+
     def move(self):
         # self.state[0] : x 좌표
         # self.state[1] : y 좌표
