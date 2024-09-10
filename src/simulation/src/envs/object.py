@@ -82,6 +82,7 @@ class UAV:
             self.request_land = False
             self.previous_upper_action = 0 # Previous Action if action==-1
             self.previous_lower_action = None
+            self.start_land = False
             # SUBSCRIBER
             self.velocity_sub = rospy.Subscriber(f'{self.ns}/mavros/local_position/velocity', TwistStamped, self.velocity_cb)
             self.state_sub = rospy.Subscriber(f"{self.ns}/mavros/state", State, self.state_cb, queue_size=10)
