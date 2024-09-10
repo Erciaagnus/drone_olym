@@ -251,9 +251,10 @@ class MUMT_v1(Env):
                     threads.append(thread)
                     thread.start()
                 for uav_idx in range(len(self.uavs)):
-                    t = threading.Thread(target=self.uav_controller, args=(uav_idx,))
-                    threads.append(t)
-                    t.start()
+                    # if not self.uavs[uav_idx].start_land:
+                        t = threading.Thread(target=self.uav_controller, args=(uav_idx,))
+                        threads.append(t)
+                        t.start()
                 for thread in threads:
                     thread.join()
                 # continuously published attitude message
@@ -300,16 +301,19 @@ class MUMT_v1(Env):
                 #self.action_is_charge(uav_idx)
                 if self.uavs[uav_idx].obs[0] < self.r_c:
                     self.uavs[uav_idx].charging = 1
-                    print(f"UAV {uav_idx} ENTERED CHARGING RADIUS, Hovering...")
+                    print(f"UAV{uav_idx}:: is_landed {self.uavs[uav_idx].is_landed}, :: request_land {self.uavs[uav_idx].request_land}")
+
                     #TODO(8) : HOVERING
-                    #print(f"UAV {uav_idx} is waiting for landing clearance...")
-                    self.w1_action[uav_idx] = "Hovering"  # 대기 상태
+                    if (self.uavs[uav_idx].is_landed == False) and (self.uavs[uav_idx].request_land == False):
+                        self.w1_action[uav_idx] = "Hovering"  # 대기 상태
+                        print(f"UAV {uav_idx} ENTERED CHARGING RADIUS, Hovering...")
                     #self.uavs[uav_idx].request_land = True
                     # LANDING | action = 0, charging_radius, is_landed = False
-                    if (self.uavs[uav_idx].is_landed == False) and (self.uavs[uav_idx].request_land == True):
-                        print("Landing...")
-                        self.w1_action[uav_idx] = "Landing" # -2 is Landing Signal
+                    elif (self.uavs[uav_idx].is_landed == False) and (self.uavs[uav_idx].request_land == True):
+                        #print("Landing...")
+                        self.w1_action[uav_idx] = "Landing"
                     elif (self.uavs[uav_idx].request_land == False) and (self.uavs[uav_idx].is_landed == True):
+                        print(f"UAV{uav_idx} is CHARGING")
                         self.uavs[uav_idx].battery = min(self.Q, self.uavs[uav_idx].battery + self.C_rate*self.Q/3600*self.duration_time/LOWER_LEVEL_FREQUENCY) # ROS Time 기준
                         self.w1_action[uav_idx] = "Charging" # Charging Signal
                         self.uavs[uav_idx].previous_upper_action = 0
@@ -330,10 +334,10 @@ class MUMT_v1(Env):
             else: # Surveil
                 if self.uavs[uav_idx].previous_upper_action == 0 and self.uavs[uav_idx].is_landed == True:
                     self.takeoff_uav(self.uavs[uav_idx])
-                    self.uavs[uav_idx].is_landed = False
+                    #self.uavs[uav_idx].is_landed = False
                     print("Charging is Finished, Take off Again")
-                    self.uavs[uav_idx].previous_upper_action = 1
-                    self.uavs[uav_idx].previous_upper_action = action
+                    #self.uavs[uav_idx].previous_upper_action = 1
+                    self.uavs[uav_idx].previous_lower_action = action
                 else:
                     # Battery
                     self.uavs[uav_idx].battery = max(0, self.uavs[uav_idx].battery - self.D_rate*self.Q/3600*self.duration_time/LOWER_LEVEL_FREQUENCY)
@@ -347,7 +351,7 @@ class MUMT_v1(Env):
                             self.current_action[uav_idx] = self.w1_action[uav_idx] # action 업데이트
                     self.uavs[uav_idx].move() #그런데 w1_action은 x축 방향 각도
                     self.uavs[uav_idx].previous_upper_action = 1
-                    self.uavs[uav_idx].previous_upper_action = action
+                    self.uavs[uav_idx].previous_lower_action = action
 
                     self.surveillance_matrix[uav_idx, action -1] = self.cal_surveillance(uav_idx, action-1)
         # for target_idx in range(self.m):
@@ -366,7 +370,7 @@ class MUMT_v1(Env):
             pass
         elif self.w1_action[uav_idx] == "Hovering":
             self.hovering(uav_idx)
-            self.uavs[uav_idx].request_land = True
+            #self.uavs[uav_idx].request_land = True
 
         else:
             self.surveil_publisher(uav_idx)
@@ -388,29 +392,58 @@ class MUMT_v1(Env):
 
     #TODO(10) LANDING ACTIONS
     def landing(self, uav_idx):
-        print("LANDING...")
+        print(f"UAV{uav_idx} is LANDING...")
         uav=self.uavs[uav_idx]
+        uav.start_land = True
         # We set Pose Data as "Goal" and local_position == Current Position
         rate= rospy.Rate(20)
-        while True:
-            uav.pose.pose.position.x = self.start_point[uav_idx][0]
-            uav.pose.pose.position.y = self.start_point[uav_idx][1]
-            uav.pose.pose.position.z = 0 # LANDING
+        uav.pose.pose.position.x = self.start_point[uav_idx][0]
+        uav.pose.pose.position.y = self.start_point[uav_idx][1]
+        uav.pose.pose.position.z = 0 # LANDING
+        uav.local_pos_pub.publish(uav.pose)
+        rate.sleep()
+        current_position_x = uav.local_position.pose.position.x
+        current_position_y = uav.local_position.pose.position.y
+        current_position_z = uav.local_position.pose.position.z
+        distance_to_goal = np.sqrt((uav.pose.pose.position.x - current_position_x) ** 2 +
+                                        (uav.pose.pose.position.y - current_position_y) ** 2)
+        if (current_position_z <= 10) and (distance_to_goal < 0.1):
+            rospy.loginfo(f"{uav.ns} has successfully landed.")
+            uav.is_landed = True
+            rate.sleep()
+    def take_off_step(self, uav):
+        uav.pose.pose.position.x = uav.local_position.pose.position.x
+        uav.pose.pose.position.y = uav.local_position.pose.position.y
+        uav.pose.pose.position.z = self.initial_altitude
+        for i in range(100):
+            if rospy.is_shutdown():
+                return
             uav.local_pos_pub.publish(uav.pose)
-            rate.sleep()
-            current_position_x = uav.local_position.pose.position.x
-            current_position_y = uav.local_position.pose.position.y
-            current_position_z = uav.local_position.pose.position.z
-            distance_to_goal = np.sqrt((uav.pose.pose.position.x - current_position_x) ** 2 +
-                                        (uav.pose.pose.position.y - current_position_y) ** 2 +
-                                        (self.initial_altitude - current_position_z) ** 2)
-            if (current_position_z <= 0.1) and (distance_to_goal < 0.1):
-                rospy.loginfo(f"{uav.ns} has successfully landed.")
-                uav.is_landed = True
-                rate.sleep()
-                break
-            rate.sleep()
+        while not uav.offboard():
+            rospy.logwarn(f"{uav.ns}: Failed to set OFFBOARD mode. Try Again")
+            uav.offboard()
+            continue
+        initial_position_x = uav.local_position.pose.position.x
+        initial_position_y = uav.local_position.pose.position.y
+        uav.pose.pose.position.x = initial_position_x
+        uav.pose.pose.position.y = initial_position_y
+        uav.pose.pose.position.z = self.initial_altitude
+        uav.local_pos_pub.publish(uav.pose)
+        rospy.sleep(0.1)
 
+        current_position_x = uav.local_position.pose.position.x
+        current_position_y = uav.local_position.pose.position.y
+        current_position_z = uav.local_position.pose.position.z
+
+        distance_to_goal = np.sqrt((uav.pose.pose.position.x - current_position_x) ** 2 +
+                                    (uav.pose.pose.position.y - current_position_y) ** 2 +
+                                    (self.initial_altitude - current_position_z) ** 2)
+        if distance_to_goal < 0.1:
+            #print(f"INITIAL TAKE OFF of {uav.ns} is SUCCESSFUL")
+            uav.is_landed = False
+            uav.previous_upper_action = 1
+            uav.previous_lower_action = 1
+            rospy.sleep(1)
     def takeoff_uav(self, uav):
         uav.pose.pose.position.x = uav.local_position.pose.position.x
         uav.pose.pose.position.y = uav.local_position.pose.position.y
@@ -465,12 +498,17 @@ class MUMT_v1(Env):
         rospy.sleep(0.1)
 
     def hovering(self, uav_idx):
-        for _ in range(100):
-            self.uavs[uav_idx].vel_target.twist.linear.x = 0
-            self.uavs[uav_idx].vel_target.twist.linear.y = 0
-            self.uavs[uav_idx].vel_target.twist.linear.z = 0
-            self.uavs[uav_idx].local_vel_pub.publish(self.uavs[uav_idx].vel_target)
-            rospy.sleep(0.1)
+        self.uavs[uav_idx].vel_target.twist.linear.x = 0
+        self.uavs[uav_idx].vel_target.twist.linear.y = 0
+        self.uavs[uav_idx].vel_target.twist.linear.z = 0
+        self.uavs[uav_idx].local_vel_pub.publish(self.uavs[uav_idx].vel_target)
+        current_x = self.uavs[uav_idx].local_position.pose.position.x
+        current_y = self.uavs[uav_idx].local_position.pose.position.y
+        distance = np.sqrt((current_x-self.start_point[uav_idx][0])**2 + (current_y-self.start_point[uav_idx][1])**2)
+        if distance < 8:
+            self.uavs[uav_idx].request_land = True
+
+        rospy.sleep(0.1)
 
     #TODO(8) : UTILS Function
     # def save_trajectories(self):
@@ -511,7 +549,7 @@ class MUMT_v1(Env):
             return 0
         else: # UAV alive
             if (
-                self.d - self.l < self.rel_observation(uav_idx, target_idx)[0] < self.d + self.l # 37 ~ 43
+                self.d - self.l + 1 < self.rel_observation(uav_idx, target_idx)[0] < self.d + self.l + 1# 37 ~ 45
                 and self.uavs[uav_idx].charging != 1 # uav 1 is not charging(on the way to charge is ok)
             ):
                 return 1 # uav is on Surveillance
