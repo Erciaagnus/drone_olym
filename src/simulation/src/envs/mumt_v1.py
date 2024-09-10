@@ -309,9 +309,11 @@ class MUMT_v1(Env):
                         print(f"UAV {uav_idx} ENTERED CHARGING RADIUS, Hovering...")
                     #self.uavs[uav_idx].request_land = True
                     # LANDING | action = 0, charging_radius, is_landed = False
+                    #TODO(9) : Landing
                     elif (self.uavs[uav_idx].is_landed == False) and (self.uavs[uav_idx].request_land == True):
                         #print("Landing...")
                         self.w1_action[uav_idx] = "Landing"
+                    #TODO(10) : Charging
                     elif (self.uavs[uav_idx].request_land == False) and (self.uavs[uav_idx].is_landed == True):
                         print(f"UAV{uav_idx} is CHARGING")
                         self.uavs[uav_idx].battery = min(self.Q, self.uavs[uav_idx].battery + self.C_rate*self.Q/3600*self.duration_time/LOWER_LEVEL_FREQUENCY) # ROS Time 기준
@@ -397,17 +399,18 @@ class MUMT_v1(Env):
         uav.start_land = True
         # We set Pose Data as "Goal" and local_position == Current Position
         rate= rospy.Rate(20)
-        uav.pose.pose.position.x = self.start_point[uav_idx][0]
-        uav.pose.pose.position.y = self.start_point[uav_idx][1]
-        uav.pose.pose.position.z = 0 # LANDING
-        uav.local_pos_pub.publish(uav.pose)
-        rate.sleep()
+        for _ in range(10):
+            uav.pose.pose.position.x = self.start_point[uav_idx][0]
+            uav.pose.pose.position.y = self.start_point[uav_idx][1]
+            uav.pose.pose.position.z = 0 # LANDING
+            uav.local_pos_pub.publish(uav.pose)
+            rate.sleep()
         current_position_x = uav.local_position.pose.position.x
         current_position_y = uav.local_position.pose.position.y
         current_position_z = uav.local_position.pose.position.z
         distance_to_goal = np.sqrt((uav.pose.pose.position.x - current_position_x) ** 2 +
                                         (uav.pose.pose.position.y - current_position_y) ** 2)
-        if (current_position_z <= 10) and (distance_to_goal < 0.1):
+        if (current_position_z <= 0.1) and (distance_to_goal < 0.1):
             rospy.loginfo(f"{uav.ns} has successfully landed.")
             uav.is_landed = True
             rate.sleep()
