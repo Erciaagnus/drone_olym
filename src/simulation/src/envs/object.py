@@ -54,6 +54,7 @@ class UAV:
             self. v = v
             # uav0, uav1, uav2 -> 0, 1, 2 [ns] 형식
             self.uav_id = int(re.findall(r'\d+', ns)[0]) # get uav_id from namespace
+            self.r_max = 5000
             self.dt = 0.05
             self.state = state
             self.battery = battery
@@ -83,6 +84,7 @@ class UAV:
             self.previous_upper_action = 0 # Previous Action if action==-1
             self.previous_lower_action = None
             self.start_land = False
+            self.offboard_mode = False
             # SUBSCRIBER
             self.velocity_sub = rospy.Subscriber(f'{self.ns}/mavros/local_position/velocity', TwistStamped, self.velocity_cb)
             self.state_sub = rospy.Subscriber(f"{self.ns}/mavros/state", State, self.state_cb, queue_size=10)
@@ -136,6 +138,7 @@ class UAV:
         response = self.set_mode_client(set_mode_request)
         if response.mode_sent:
             rospy.loginfo(f"{self.ns}: Mode successfully set to OFFBOARD")
+            self.offboard_mode =True
             return True
         else:
             rospy.logwarn(f"{self.ns}: Failed to set mode to OFFBOARD")
