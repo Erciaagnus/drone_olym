@@ -56,13 +56,18 @@ class Heuristic():
         self.D_rate = 0.41 # 1/2.442 (Battery Runtime)
         self.Q = 22_000 #[mAh] Battery Capacity
         self.v = 17 # [m/s]
-    def make_cost_matrix(self, obs, m , n):
+    def make_cost_matrix(self, obs, m , n, w_d = 0.05, w_age= 0.5):
         # Create a list of keys for all UAV-target pairs
             keys = [f"uav{uav_id+1}_target{target_id+1}" for uav_id in range(m) for target_id in range(n)]
         # Extract the relevant observations and convert to a Numpy array
-            observations = np.array([obs[key][0] for key in keys]) # obs[0] distance
+            distances = np.array([obs[key][0] for key in keys]) # obs[0] distance
         # Reshape the array into the cost matrix
-            cost_matrix = observations.reshape(m, n)
+            distances_matrix = distances.reshape(m, n)
+            #print(f"distance_matrix{distances_matrix}")
+            ages = np.array([obs["age"]])
+            age_matrix = np.tile(ages, (m,1))
+            #print(f"age_matrix{age_matrix}")
+            cost_matrix = w_d*distances_matrix + w_age*age_matrix
             return cost_matrix
     def hungarian_assignment(self, cost_matrix):
             uav_idx, target_idx = linear_sum_assignment(cost_matrix)
@@ -100,6 +105,7 @@ class Heuristic():
         return action
     # 3번 사용
     def get_action_from_pairs(self, UAV_idx, Target_idx, m, n, obs, eps1, eps2, duration_time):
+        #print(f"PAIRS : [UAV{UAV_idx}:Target{Target_idx}]")
         battery = obs["battery"]
         action = np.zeros(m, dtype=int)
         for uav_idx, target_idx in zip(UAV_idx, Target_idx):
@@ -126,6 +132,7 @@ class Heuristic():
     def r_t_hungarian(self, obs, m, n, eps1, eps2, duration_time):
         uav_idx, target_idx = self.hungarian_assignment(self.make_cost_matrix(obs, m, n))
         action = self.get_action_from_pairs(uav_idx, target_idx, m, n, obs, eps1, eps2, duration_time)
+        #print(f"actions{action}")
         return action
 
         #TODO(6) Criteria for Age
@@ -156,17 +163,21 @@ class Simulation():
             #print("SUCCESSFUL")
         else:
             destination = f"TARGET {location}"
-            position = self.target_positions[location-1]
+            #position = self.target_positions[location-1]
+            position = f"[{self.target_positions[location-1][0]:.2f}, {self.target_positions[location-1][1]:.2f}]"
         distance = float(f"{observation[0]:.3f}") #round(observation[0], 3)
         angle = float(f"{observation[1]:.3f}")#round(observation[1], 3)
         #print(f"test ######### {distance}, {angle}")
         return [uav_id, destination, position, distance, angle, bat]
 
     def run(self):
-        self.target_pose = ([[800, 1430], [-1180, 700], [1200, 1300], [-1100, -1200], [800, -1120]], [0]*self.n)
-        env = MUMT_v1(m=self.m, n=self.n)
+        #self.target_pose = ([[800, 1430], [-1180, 700], [1200, 1300], [-1100, -1200], [800, -1120]], [0]*self.n)
+        env = MUMT_v1(m=self.m, n=self.n, seed=1)
         #start_time = time.time()
-        obs, _ = env.reset(uav_pose = None, target_pose = self.target_pose, batteries=[1200, 1200, 1200])
+        obs, _ = env.reset(uav_pose = None, target_pose = None, batteries=[22000, 22000, 22000])
+        # self.target_pose = ([[env.targets[i].state[0], env.targets[i].state[1]]],[env.targets[i].initial_beta] for i in range(self.n))
+        self.target_pose = ([[env.targets[i].state[0], env.targets[i].state[1]] for i in range(self.n)],
+                    [env.targets[i].initial_beta for i in range(self.n)])
         heuristic = Heuristic()
         truncated =False
         total_time_step = 0
@@ -183,13 +194,15 @@ class Simulation():
         while truncated == False:
             start_time = env.clock
             step += 1
+            total_time += env.duration_time
             #action = heuristic.high_age_first(obs, self.m)
             action = heuristic.r_t_hungarian(obs, self.m, self.n, eps1 = self.eps1, eps2 = self.eps2, duration_time = env.duration_time)
             obs, reward, _, truncated, _ = env.step(action)
             episode_reward += reward
             bat = obs["battery"]
             age = obs['age']
-            print(f"step: {step} | age : {age}| reward: {episode_reward}")
+            #float(f"{observation[1]:.3f}
+            print(f"step: {step} | total time {total_time} | age : {age}| reward: {episode_reward:.3f}")
             #print("##### ITRERATION IS FINISHED #####")
             #print(f'###################### action is {action}')
             uav_positions = env.uavs[0].state[:2]
@@ -198,7 +211,7 @@ class Simulation():
             added_uavs = set()  # 이미 표에 추가된 UAV를 기록하는 집합
             for i in range(self.m):
                 if action[i] == -1:
-                    print("OOPS, USING PREVIOUS VALUE")
+                    print(f"UAV{i} OOPS, USING PREVIOUS VALUE")
                     #print("#### ", env.uavs[i].previous_lower_action)
                     action[i] = env.uavs[i].previous_lower_action
                     #print(f"UAV{i} is action {action[i]}")
