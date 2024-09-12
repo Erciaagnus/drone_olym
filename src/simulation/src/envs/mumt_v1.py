@@ -48,6 +48,7 @@ def wrap(theta):
         theta += 2*math.pi
     return theta
 class MUMT_v1(Env):
+    min_rt = 1000 #[m]
     def __init__(self, r_max=5000, r_min=10, dt=0.05, d=40.0, l=4, m=3, n=5, r_c=10, max_step=8*3600, seed=None):
         #TODO(1): Parameters
         self.Q = 22_000 #[mAh] battery capacity
@@ -202,7 +203,7 @@ class MUMT_v1(Env):
         # TARGET
         if target_pose is None:
             print("Please Set the Target Pose")
-            target1_r = np.random.uniform(30, 35, self.n)
+            target1_r = np.random.uniform(self.min_rt, self.r_max - self.d, self.n)
             target1_beta = np.random.uniform(-np.pi, np.pi, self.n)
             target_states = np.array([target1_r*np.cos(target1_beta), target1_r*np.sin(target1_beta)]).T
             ages = [0]*self.n
@@ -218,7 +219,8 @@ class MUMT_v1(Env):
                                             initial_beta=target1_beta[i], initial_r=target1_r[i],
                                             target_type=target_type, sigma_rayleigh=sigma_rayleigh,
                                             m=self.m, seed=self.seed,))
-
+        for target_idx, target in enumerate(self.targets):
+            target_x, target_y = target.state
         self.initial_altitude = 10
         rate = rospy.Rate(20)
         threads = []
@@ -264,7 +266,7 @@ class MUMT_v1(Env):
                 self.targets[target_idx].surveillance = self.surveillance[target_idx]
                 #print(f"TARGET ID::{target_idx}, SURVEIL?:: {self.targets[target_idx].surveillance}")
                 self.targets[target_idx].cal_age(self.duration_time)
-                reward += -self.targets[target_idx].age #이거 step별로 저장되지? 원래는 1초라고... 오케이? 그런데 지금 이렇게 계산되고 있음.
+                reward += -self.targets[target_idx].age
             reward = reward / self.n # Average Reward of All targets #Total Step
 
             self.step_count += 1
@@ -301,7 +303,7 @@ class MUMT_v1(Env):
                 #self.action_is_charge(uav_idx)
                 if self.uavs[uav_idx].obs[0] < self.r_c:
                     self.uavs[uav_idx].charging = 1
-                    print(f"UAV{uav_idx}:: is_landed {self.uavs[uav_idx].is_landed}, :: request_land {self.uavs[uav_idx].request_land}")
+                    #print(f"UAV{uav_idx}:: is_landed {self.uavs[uav_idx].is_landed}, :: request_land {self.uavs[uav_idx].request_land}")
 
                     #TODO(8) : HOVERING
                     if (self.uavs[uav_idx].is_landed == False) and (self.uavs[uav_idx].request_land == False):
@@ -315,7 +317,7 @@ class MUMT_v1(Env):
                         self.w1_action[uav_idx] = "Landing"
                     #TODO(10) : Charging
                     elif (self.uavs[uav_idx].request_land == False) and (self.uavs[uav_idx].is_landed == True):
-                        print(f"UAV{uav_idx} is CHARGING")
+                        #print(f"UAV{uav_idx} is CHARGING")
                         self.uavs[uav_idx].battery = min(self.Q, self.uavs[uav_idx].battery + self.C_rate*self.Q/3600*self.duration_time/LOWER_LEVEL_FREQUENCY) # ROS Time 기준
                         self.w1_action[uav_idx] = "Charging" # Charging Signal
                         self.uavs[uav_idx].previous_upper_action = 0
@@ -331,13 +333,14 @@ class MUMT_v1(Env):
                         self.uavs[uav_idx].move() #그런데 w1_action은 x축 방향 각도
                         self.uavs[uav_idx].previous_upper_action = 0
                         self.uavs[uav_idx].previous_lower_action = 0
-                    self.surveillance_matrix[uav_idx, action -1] = self.cal_surveillance(uav_idx, action-1)
+                for target_idx in range(self.n):
+                    self.surveillance_matrix[uav_idx, target_idx] = self.cal_surveillance(uav_idx, target_idx) # 감시 여부 반환
 
             else: # Surveil
-                if self.uavs[uav_idx].previous_upper_action == 0 and self.uavs[uav_idx].is_landed == True:
-                    self.takeoff_uav(self.uavs[uav_idx])
+                if self.uavs[uav_idx].previous_upper_action == 0 and self.uavs[uav_idx].is_landed == True and self.uavs[uav_idx].local_position.pose.position.z<10:
+                    self.take_off_step(self.uavs[uav_idx])
                     #self.uavs[uav_idx].is_landed = False
-                    print("Charging is Finished, Take off Again")
+                    #print("Charging is Finished, Take off Again")
                     #self.uavs[uav_idx].previous_upper_action = 1
                     self.uavs[uav_idx].previous_lower_action = action
                 else:
@@ -355,7 +358,8 @@ class MUMT_v1(Env):
                     self.uavs[uav_idx].previous_upper_action = 1
                     self.uavs[uav_idx].previous_lower_action = action
 
-                    self.surveillance_matrix[uav_idx, action -1] = self.cal_surveillance(uav_idx, action-1)
+                for target_idx in range(self.n):
+                    self.surveillance_matrix[uav_idx, target_idx] = self.cal_surveillance(uav_idx, target_idx)
         # for target_idx in range(self.m):
         #     self.surveillance_matrix[uav_idx, target_idx] = self.cal_surveillance(uav_idx, target_idx)
         uav_x, uav_y, uav_theta = self.uavs[uav_idx].state
@@ -422,10 +426,26 @@ class MUMT_v1(Env):
             if rospy.is_shutdown():
                 return
             uav.local_pos_pub.publish(uav.pose)
-        while not uav.offboard():
+        while not uav.offboard_mode:
             rospy.logwarn(f"{uav.ns}: Failed to set OFFBOARD mode. Try Again")
             uav.offboard()
             continue
+
+        while not uav.current_state.armed:
+            try:
+                uav.arming()
+                rospy.loginfo(f"UAV ID: {uav.uav_id}, Namespace: {uav.ns}, Armed: {uav.current_state.armed}, Mode: {uav.current_state.mode}")
+                if uav.current_state.armed:
+                    rospy.loginfo(f"{uav.ns}: UAV successfully armed")
+                    break
+                else:
+                    rospy.logwarn(f"{uav.ns}: Failed to arm UAV. Retrying...")
+                    uav.arming()
+                    rospy.sleep(0.1)
+            except Exception as e:
+                rospy.logerr(f"Failed to arm {uav.ns}: {e}")
+            rospy.sleep(0.5)
+
         initial_position_x = uav.local_position.pose.position.x
         initial_position_y = uav.local_position.pose.position.y
         uav.pose.pose.position.x = initial_position_x
@@ -444,6 +464,7 @@ class MUMT_v1(Env):
         if distance_to_goal < 0.1:
             #print(f"INITIAL TAKE OFF of {uav.ns} is SUCCESSFUL")
             uav.is_landed = False
+            print(f"{uav} Charging is Finished, Take off again")
             uav.previous_upper_action = 1
             uav.previous_lower_action = 1
             rospy.sleep(1)
