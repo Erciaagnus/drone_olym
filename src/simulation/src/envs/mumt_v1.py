@@ -49,7 +49,7 @@ def wrap(theta):
     return theta
 class MUMT_v1(Env):
     min_rt = 1000 #[m]
-    def __init__(self, r_max=5000, r_min=10, dt=0.05, d=40.0, l=4, m=3, n=5, r_c=10, max_step=8*3600, seed=None):
+    def __init__(self, r_max=5000, r_min=10, dt=0.05, d=40.0, l=4, m=3, n=5, r_c=10, max_step=4*3600, seed=None):
         #TODO(1): Parameters
         self.Q = 22_000 #[mAh] battery capacity
         self.C_rate = 2
@@ -59,7 +59,7 @@ class MUMT_v1(Env):
         self.d_min = 30
         self.omega_max = self.v / self.d_min
         self.r_max = r_max
-
+        self.total_time = 0
         #TODO(2): Check the MAVROS PX4 Communication
         self.init_env()
         self.uavs = [UAV(ns=f"/uav{i}", state=np.zeros(3), battery=22000) for i in range(m)]
@@ -241,6 +241,7 @@ class MUMT_v1(Env):
             truncated = False
             action = np.squeeze(action)
             reward = 0
+
             if action.ndim == 0:
                 action = np.expand_dims(action, axis = 0)
             for _ in range(LOWER_LEVEL_FREQUENCY): # 10번 반복
@@ -273,9 +274,10 @@ class MUMT_v1(Env):
             real_end = time.time()
             end_time = self.clock
             self.duration_time = end_time - start_time
+            self.total_time += self.duration_time
             print(f"Step Duration :: ", end_time-start_time)
             print(f"Real Time Duration :: ", real_end - real_start)
-            if self.step_count >= self.max_step:
+            if self.total_time >= self.max_step:
                 truncated = True
             return self.dict_observation, reward, terminal, truncated, {}
 
@@ -573,7 +575,7 @@ class MUMT_v1(Env):
             return 0
         else: # UAV alive
             if (
-                self.d - self.l + 1 < self.rel_observation(uav_idx, target_idx)[0] < self.d + self.l + 1# 37 ~ 45
+                self.d - self.l + 1 < self.rel_observation(uav_idx, target_idx)[0] < self.d + self.l + 2# 37 ~ 45
                 and self.uavs[uav_idx].charging != 1 # uav 1 is not charging(on the way to charge is ok)
             ):
                 return 1 # uav is on Surveillance
