@@ -174,7 +174,7 @@ class Simulation():
         #self.target_pose = ([[800, 1430], [-1180, 700], [1200, 1300], [-1100, -1200], [800, -1120]], [0]*self.n)
         env = MUMT_v1(m=self.m, n=self.n, seed=1)
         #start_time = time.time()
-        obs, _ = env.reset(uav_pose = None, target_pose = None, batteries=[22000, 22000, 22000])
+        obs, _ = env.reset(uav_pose = None, target_pose = None, batteries=[11000, 11000, 11000])
         # self.target_pose = ([[env.targets[i].state[0], env.targets[i].state[1]]],[env.targets[i].initial_beta] for i in range(self.n))
         self.target_pose = ([[env.targets[i].state[0], env.targets[i].state[1]] for i in range(self.n)],
                     [env.targets[i].initial_beta for i in range(self.n)])
