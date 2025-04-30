@@ -1,6 +1,54 @@
-# Programming for Autonomous Drone
+# Multi-Agent Autonomous Drone Swarm Control
 
-# Caution!
-1. No direct modification/push to main brach.
-2. Exact and Detailed Commits.
-3. Local environment -> Pull Request to other branch -> Develop Branch -> Modification -> Main Branch(PR)
+## Overview
+This project is conducted under the MLCS (Machine Learning and Control Systems) Lab and focuses on **multi-agent autonomous drone control** in complex environments using **Model Predictive Control (MPC)** techniques.
+
+We develop a system where multiple UAVs (drones) collaborate to perform surveillance missions, dynamically assign tasks, and optimize path planning through distributed intelligence.
+
+## Project Goals
+- Control and coordination of multiple UAVs in a shared airspace.
+- Design and validation of **Dynamic Programming** frameworks.
+- Implementation of **task allocation**, **energy-aware decision-making**, and **age-based surveillance scheduling**.
+- Deployment in a 3D simulation environment using **PX4**, **Gazebo**, and **ROS**.
+- Robust offboard control and real-time optimization through **MDP-based decision policies**.
+
+## Features
+- ✅ **Hierarchical Decision Making** using Dynamic Programming (DP)
+- ✅ **Custom OpenAI Gym Environment** for multi-target surveillance
+- ✅ **Battery-aware mission execution** with recharge-and-resume logic
+- ✅ **Yaw-rate control** via EKF-enhanced heading estimation
+- ✅ **Reward optimization** based on surveillance target age minimization
+- ✅ Supports up to **12 drones simultaneously** in simulation
+
+## Architecture
+- **Simulation Stack**: PX4 Autopilot + Gazebo + ROS
+- **Controller**: MPC (centralized/distributed) + MDP with hierarchical DP
+- **Planning Inputs**: Distance to targets, battery level, angle offset, and target 'age'
+- **Communication**: Multi-threaded ROS nodes with offboard control and attitude publishing
+- **Recovery Mechanisms**: Automatic re-orientation and reconnection after landing or disarming
+
+## Technologies Used
+- `Python`, `C++`
+- `ROS Noetic`, `Gazebo`, `PX4`
+- `OpenAI Gym`, `NumPy`, `Matplotlib`
+- `GAZEBO`, `MAVROS`, `EKF2`, `QGroundControl`
+
+## Demo
+![drone_swarm_demo](assets/demo.gif)  
+*Simultaneous drone swarm performing coordinated surveillance missions.*
+
+## Publications / Experiments
+- Comparison with heuristic baselines vs. dynamic programming method
+- Validation of swarm policy under signal-loss and compass calibration disturbances
+- Long-run simulations up to 5000 steps with recovery from offboard mode drops
+
+## Contributors
+- **JeongHyeok Lim** ([henricus0973](https://github.com/erciaagnus))  
+- **SeongWon Kim** ([seongwonkim](https://github.com/seongwonkim))
+
+## Timeline
+**October 2024 – February 2025**
+
+## License
+This project is open for academic collaboration and research purposes.  
+For usage in commercial or third-party tools, please contact the contributors.
